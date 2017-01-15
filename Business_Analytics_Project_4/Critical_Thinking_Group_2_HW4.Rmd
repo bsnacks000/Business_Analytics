@@ -1,0 +1,1371 @@
+---
+title: "IS621 Homework 4"
+author: "Sekhar Mekala, John DeBlase, Sonya Hong"
+date: "Friday, November 11, 2016"
+output: pdf_document
+---
+
+##Project requirements
+
+The main goal of this project is to perform data analysis of an insurance company's data in order to predict if a person will be in a car crash, and the amount it will cost to the company if the person does crash his/her car. We are given 2 data sets: _training_ and _test_ data sets. The training data has input variables along with the observed response variable. We will use the training data set to train our model, and the predictions obtained on the test data will be submitted as a project deliverable.
+
+
+##Data Exploration
+
+The training and test data sets have the following variables:
+
+###*Figure-1: Training and test data sets variables*
+
+![fig1](C:\Users\Sekhar\Documents\R Programs\Business Analytics\HW4\fig1.png)
+
+
+```{r echo=FALSE, warning=FALSE,include=FALSE}
+library(knitr)
+library(ggplot2)
+library(reshape2)
+library(gridExtra)
+library(boot)
+library(pander)
+library(pander)
+library(gridExtra)
+library(MASS)
+library(caret)
+library(pROC)
+library(class)
+
+setwd("C:/Users/Sekhar/Documents/R Programs/Business Analytics/HW4")
+train_df <- read.csv("insurance_training_data.csv")
+test_df <- read.csv("insurance-evaluation-data.csv")
+```
+
+The _test_ data set has `r nrow(test_df)` rows and the _train_ data set has `r nrow(train_df)` rows. Both the data sets have `r ncol(test_df)` columns (or variables) displayed in _Figure-1_.
+
+Below is a summary of all the variables in training data set:
+
+###*Figure-2: Summary of the training data set*
+
+```{r echo=FALSE, warning=FALSE}
+summary(train_df)
+```
+
+The summary details show that the variables (such as INCOME, HOME_VAL etc) representing money contain symbols such as "\$" and ",". There are also variables with NA (unavailable data). We will therefore perform the following data changes:
+
+1. Create a dummy variable NA_AGE to represent NA values in AGE variable. If AGE has NA values, then the corresponding values in NA_AGE will have 1 else it will have 0. The NA values in AGE will be imputed with median values of AGE variable
+
+
+2. Create a dummy variable NA_YOJ to represent NA values in the YOJ variable. If YOJ has NA values, then the corresponding values in NA_YOJ will have 1 else it will have 0. The NA values in YOJ will be imputed with median values of YOJ variable
+
+3. Create a dummy variable NA_INCOME to represent NA values in INCOME variable. If INCOME has NA values, then the corresponding values in NA_INCOME will have 1 else it will have 0. The INCOME variable has "\$" and ",", so these characters will be deleted, and the variable will be converted to numeric. The NA values in INCOME will be imputed with median values of INCOME variable. 
+
+4. Create a dummy variable NA_HOME_VAL to represent NA values in the HOME_VAL variable. If HOME_VAL has NA values, then the corresponding values in NA_HOME_VAL will have 1 else it will have 0. The HOME_VAL variable has "\$" and ",", so these characters will be deleted, and the variable is converted to numeric. The NA values in NA_HOME_VAL will be imputed with 0 values, since we are assuming that NA values in the HOME_VAL variable represents that the driver is not a home owner. 
+
+5. The BLUEBOOK variable has "\$" and ",", so these characters will be deleted, and the variable converted to numeric.
+
+6. The OLDCLAIM variable has "\$" and ",", so these characters will be deleted, and the variableconverted to numeric.
+
+7. For MSTATUS, create a dummy variable DUMMY_MSTATUS, so that "Yes" will be represented by 1 and "No" by 0
+
+8. For SEX, create a dummy variable DUMMY_SEX, so that "M" will be represented by 1 and "F" by 0
+
+9. For PARENT1, create a dummy variable DUMMY_PARENT1, so that "Yes" will be represented by 1 and "No" by 0
+
+10. For CAR_AGE replace all NA with median values of CAR_AGE, and convert the negative value to positive value, since negative values might have been accidentally entered while gathering the data. 
+
+11. For EDUCATION, create 4 dummy variables DUMMY_NO_HS, DUMMY_HS, DUMMY_BACHELOR, DUMMY_MASTERS  to represent "< high school"", "high school", "Bachelors", "Masters" respectively. A value of 1 in the corresponding dummy variable represents the respective level of education, and a value of 0 in all the dummy variables represent PhD as the level of education. 
+
+12. The JOB variable has 8 job levels and also NA values. We will create 8 dummy variables "DUMMY_Clerical", "DUMMY_Doctor","DUMMY_Home_Maker", "DUMMY_Lawyer", "DUMMY_Manager", "DUMMY_Professional" and "DUMMY_Student" and "DUMMY_Blue Collar" representing the levels "Clerical", "Doctor", "Home Maker", "Lawyer", "Manager", "Professional", "Student", "z_Blue Collar" respectively. These dummy variables will contain 1, if the observation has the corresponding level as the JOB. But if the JOB variable value is unknown, then all these dummy variables will have 0 values. This means, we are treating the unknown variables as separate values.
+
+13. For URBANICITY, create a dummy variable DUMMY_URBANICITY variable, such that "Highly Urban/ Urban" is represented as 1, 0 for "Highly Rural/Rural" value
+
+14. For CAR_USE, create a dummy variable DUMMY_CAR_USE, such that "Commercial" car use is represented as 1, and "Private" as 0.
+
+15. The CAR_TYPE variable contains the car type, and it has 6 different values. We will create 5 dummy variables "DUMMY_Minivan"     "DUMMY_Panel_Truck", "DUMMY_Pickup", "DUMMY_Sports_Car" and "DUMMY_Van" to represent "Minivan", "Panel Truck", "Pickup", "Sports Car", "Van" rerpectively. If these dummy variables contain 1 for an observation, then that observation has the respective CAR_TYPE level. If all these dummy variables contain 0, then that represents the "SUV" CARTYPE.
+
+16. For RED_CAR, create a dummy variable DUMMY_RED_CAR to represent a "YES" with 1, and "NO" with 0.
+
+17. For REVOKED, create a dummy variable DUMMY_REVOKED to represent a "YES" with 1, and "NO" with 0.
+
+18. We will create a new variable called DUMMY_HOME_OWNER that represents if the driver is a home owner. If the variable HOME_VAL has a value greater than 0, then this variable will have 1, else it will have 0. For HOME_VAL with NA values, the DUMMY_HOME_OWNER variable will have 0.
+
+
+Let us check how the TARGET_FLAG's data is distributed. 
+
+###*Figure-3: TARGET_FLAG classes proportion*
+```{r echo=FALSE}
+display_df <- data.frame(table(train_df$TARGET_FLAG))
+display_df$perc <- as.character(round(100*display_df$Freq/sum(display_df$Freq),2))
+#display_df$perc <- round(100*display_df$Freq/sum(display_df$Freq),2)
+display_df$perc <- paste(display_df$perc,"%",sep="")
+
+names(display_df) <- c("TARGET_FLAG", "Count", "Percentage")
+
+ggplot(data = display_df, aes(x=TARGET_FLAG, y=Count, fill = TARGET_FLAG, label = Percentage)) +
+  geom_bar(stat = "identity", position = "dodge",width=0.5) +
+  geom_text(position = position_dodge(width = .9),vjust=0)
+  
+```
+
+From _Figure-3_ we can conclude that we have an approximate ratio of 74%:26% between 0 and 1 classes of TARGET_FLAG. There is no severe data imbalance among the classes. However, without any modeling effort, we can still achieve an accuracy of 73.62%, if we classify all the samples as class-0. We can view this as the  _null model_ accuracy. Our model should have a better accuracy than the null model, and our model should accurately predict the class-1 cases. To achieve this, we need to estimate an optimal cut-off point for the class-1 probability, instead of using the default 0.5 cut-off (i.e., classifying the sample as class-1, when the probability of class-1 is greater than 0.5).
+
+
+##Data Preparation
+Based on the modifications listed in data exploration, we modified the training and test data sets. We also created another data set named "train_df_mod", which has the columns that would be used in building the models. The list of variables present in "train_df_mod" are displayed below:
+
+###*Figure-4: Modified training data set's variables*
+
+```{r echo=FALSE, warning=FALSE}
+
+#Add an indicator variable, to distinguish the data sets
+train_df <- cbind(indicator="Train",train_df)
+test_df <- cbind(indicator="Test",test_df)
+
+#Combine  the test and train data sets
+df <- rbind(train_df,test_df)
+#summary(df)
+
+#AGE DUMMY Variable
+df$NA_AGE <- df$AGE
+df$NA_AGE[!is.na(df$NA_AGE)] <- 0
+df$NA_AGE[is.na(df$NA_AGE)] <- 1
+
+df$AGE[is.na(df$AGE)] <- median(df$AGE,na.rm=TRUE)
+
+#YOJ Dummy variable
+df$NA_YOJ <- df$YOJ
+df$NA_YOJ[!is.na(df$NA_YOJ)] <- 0
+df$NA_YOJ[is.na(df$NA_YOJ)] <- 1
+df$YOJ[is.na(df$YOJ)] <- median(df$YOJ,na.rm=TRUE)
+
+#Clean INCOME Data
+df$INCOME <- gsub(",","",df$INCOME)
+df$INCOME <- as.numeric(gsub("$","",df$INCOME,fixed = TRUE))
+
+#Income data has NA values, so create NA_INCOME variable also
+df$NA_INCOME <- ifelse(is.na(df$INCOME),1,0)
+
+df$INCOME[is.na(df$INCOME)] <- median(df$INCOME,na.rm=TRUE)
+
+
+df$HOME_VAL <- gsub(",","",df$HOME_VAL)
+
+df$HOME_VAL <- as.numeric(gsub("$","",df$HOME_VAL,fixed = TRUE))
+
+df$NA_HOME_VAL <- ifelse(is.na(df$HOME_VAL),1,0)
+
+
+
+#df$HOME_VAL[is.na(df$HOME_VAL)] <- median(df$HOME_VAL,na.rm=TRUE)
+df$HOME_VAL[is.na(df$HOME_VAL)] <- 0
+
+df$DUMMY_HOME_OWNER <- ifelse(df$HOME_VAL> 0,1,0)
+
+df$BLUEBOOK <- gsub(",","",df$BLUEBOOK)
+df$BLUEBOOK <- as.numeric(gsub("$","",df$BLUEBOOK,fixed = TRUE))
+
+
+df$OLDCLAIM  <- gsub(",","",df$OLDCLAIM )
+df$OLDCLAIM  <- as.numeric(gsub("$","",df$OLDCLAIM,fixed = TRUE))
+
+df$DUMMY_MSTATUS <- ifelse(df$MSTATUS=="z_No",0,1)
+
+df$DUMMY_SEX <- ifelse(df$SEX=="z_F",0,1)
+
+df$DUMMY_PARENT1 <- ifelse(df$PARENT1=="No",0,1)
+ 
+df$NA_CAR_AGE <- df$CAR_AGE
+df$NA_CAR_AGE[!is.na(df$NA_CAR_AGE)] <- 0
+df$NA_CAR_AGE[is.na(df$NA_CAR_AGE)] <- 1
+df$CAR_AGE[is.na(df$CAR_AGE)] <- median(df$CAR_AGE,na.rm=TRUE)
+df <- df[df$CAR_AGE>=0,]
+#df$CAR_AGE[df$CAR_AGE < 0] <- -1*df$CAR_AGE[df$CAR_AGE < 0]
+
+
+
+df$DUMMY_NO_HS <- ifelse(df$EDUCATION== "<High School",1,0)
+df$DUMMY_HS <- ifelse(df$EDUCATION== "z_High School",1,0)
+df$DUMMY_BACHELOR <- ifelse(df$EDUCATION== "Bachelors",1,0)
+df$DUMMY_MASTERS <- ifelse(df$EDUCATION== "Masters",1,0)
+
+df$DUMMY_Clerical <- ifelse(df$JOB== "Clerical",1,0)
+df$DUMMY_Doctor <- ifelse(df$JOB== "Doctor",1,0)
+df$DUMMY_Home_Maker <- ifelse(df$JOB== "Home Maker",1,0)
+df$DUMMY_Lawyer <- ifelse(df$JOB== "Lawyer",1,0)
+df$DUMMY_Manager <- ifelse(df$JOB== "Manager",1,0)
+df$DUMMY_Professional <- ifelse(df$JOB== "Professional",1,0)
+df$DUMMY_Student <- ifelse(df$JOB== "Student",1,0)
+df$DUMMY_Blue_Collar <- ifelse(df$JOB== "z_Blue Collar",1,0)
+
+df$DUMMY_URBANICITY <- ifelse(df$URBANICITY == "Highly Urban/ Urban",1,0)
+
+
+df$DUMMY_CAR_USE <- ifelse(df$CAR_USE == "Commercial",1,0)
+
+
+df$DUMMY_MINI_VAN <- ifelse(df$CAR_TYPE == "Minivan",1,0)
+
+df$DUMMY_Panel_Truck <- ifelse(df$CAR_TYPE == "Panel Truck",1,0)
+df$DUMMY_Pickup <- ifelse(df$CAR_TYPE == "Pickup",1,0)
+df$DUMMY_Sports_Car <- ifelse(df$CAR_TYPE == "Sports Car",1,0)
+df$DUMMY_Van <- ifelse(df$CAR_TYPE == "Van",1,0)
+
+df$DUMMY_RED_CAR <- ifelse(df$RED_CAR == "yes",1,0)
+df$DUMMY_REVOKED <- ifelse(df$REVOKED == "Yes",1,0)
+
+#summary(df)
+#head(df)
+
+train_df <- df[df$indicator == "Train",c(-1)]
+test_df <- df[df$indicator == "Test",c(-1)]
+
+#head(train_df)
+
+#names(train_df)
+
+#Let us prepare another data frame to build models
+train_df_mod <- train_df[,c("TARGET_FLAG",
+"TARGET_AMT",
+"KIDSDRIV",
+"AGE",
+"HOMEKIDS",
+"YOJ",
+"INCOME",
+"HOME_VAL",
+"TRAVTIME",
+"BLUEBOOK",
+"TIF",
+"OLDCLAIM",
+"CLM_FREQ",
+"MVR_PTS",
+"CAR_AGE",
+"NA_AGE",
+"NA_YOJ",
+"NA_INCOME",
+"NA_HOME_VAL",
+"DUMMY_HOME_OWNER",
+"DUMMY_MSTATUS",
+"DUMMY_SEX",
+"DUMMY_PARENT1",
+"NA_CAR_AGE",
+"DUMMY_NO_HS",
+"DUMMY_HS",
+"DUMMY_BACHELOR",
+"DUMMY_MASTERS",
+"DUMMY_Clerical",
+"DUMMY_Doctor",
+"DUMMY_Home_Maker",
+"DUMMY_Lawyer",
+"DUMMY_Manager",
+"DUMMY_Professional",
+"DUMMY_Student",
+"DUMMY_Blue_Collar",
+"DUMMY_URBANICITY",
+"DUMMY_CAR_USE",
+"DUMMY_MINI_VAN",
+"DUMMY_Panel_Truck",
+"DUMMY_Pickup",
+"DUMMY_Sports_Car",
+"DUMMY_Van",
+"DUMMY_RED_CAR",
+"DUMMY_REVOKED"
+                            )]
+
+#head(train_df_mod)
+names(train_df_mod)
+```
+
+The modified data set has `r ncol(train_df_mod)` columns, while the initial training data set has 26 columns. The summary information of all the variables in the modified data set is given in Appendix-A , _Figure-A.1_.
+
+##Model building
+
+We will build 3 models based for identifying the TARGET_FLAG value. Two models are based on the logistic regression, and the third model will be based on KNN (K Nearest Negihbors). The first model will include all the columns of the training data, including the associations between the NA dummy variables with the corresponding variables. The _stepAIC()_ function of MASS library is used to select the significant variables (using mixed variable selection method). _Model-1_ is again rebuilt to include only the significant variables indentified by _stepAIC()_ function. 
+
+We will build the second model (_Model-2_), using second order polynomials of the variables used in _Model-1_. For the third model (_Model-3_), we will use a non-parametric method known as K Nearest Negihbors. The three models will be compared using AUC (Area Under the Cure) of ROC (Receiver Operating Characteristics). The model that has the least AUC will be dropped from further consideration. If there is a tie, then we will use 5 fold Cross Validation to estimate the classification error. Once we determine the best model among the 3 models, we will determine the cut-off probability (i.e., probability that TARGET_FLAG=1), so that the _sensitivity_ of the model is improved. The identified cut-off point should have better sensitivity than the NULL model, and the accuracy should be at least that of the NULL model. When we decrease the threshold value, the accuracy usually decreases, but the sensitivity increases. The challenge is to identify the optimal threshold, so that both sensitivity and accruacy are maximized.  
+
+Once the probabilities of TARGET_FLAG=1 are identified (let us address the probabilities variable as PROB), we will use the TARGET_FLAG variable, PROB variable and other variables in the data set to predict the potential claim amount using linear regression techniques. 
+
+###Building _Model-1_
+
+Using the _glm()_ function we fit a basic logistic regression model. The summary of the _model-1_ coefficients is given below:
+
+###_Figure-5: Variable coefficients, std. errors and p-values of logistic model_
+
+```{r echo=FALSE}
+glm.fit1 <- glm(data=train_df_mod[,-2],TARGET_FLAG~KIDSDRIV+
+AGE*NA_AGE+
+HOMEKIDS+
+YOJ*NA_YOJ+
+INCOME*NA_INCOME+
+HOME_VAL*NA_HOME_VAL+
+TRAVTIME+
+BLUEBOOK+
+TIF+
+OLDCLAIM+
+CLM_FREQ+
+MVR_PTS+
+CAR_AGE*NA_CAR_AGE+
+DUMMY_HOME_OWNER*NA_HOME_VAL+
+DUMMY_MSTATUS+
+DUMMY_SEX+
+DUMMY_PARENT1+
+DUMMY_NO_HS+
+DUMMY_HS+
+DUMMY_BACHELOR+
+DUMMY_MASTERS+
+DUMMY_Clerical+
+DUMMY_Doctor+
+DUMMY_Home_Maker+
+DUMMY_Lawyer+
+DUMMY_Manager+
+DUMMY_Professional+
+DUMMY_Student+
+DUMMY_Blue_Collar+
+DUMMY_URBANICITY +
+DUMMY_CAR_USE+
+DUMMY_MINI_VAN+
+DUMMY_Panel_Truck+
+DUMMY_Pickup+
+DUMMY_Sports_Car+
+DUMMY_Van+
+DUMMY_RED_CAR+
+DUMMY_REVOKED,family="binomial")
+
+#names(summary(glm.fit1))
+#stepAIC(glm.fit1)
+display_df <- data.frame(summary(glm.fit1)$coefficients)
+display_df <- display_df[,-3]
+Variable <- rownames(display_df)
+display_df <- cbind(Variable,display_df)
+rownames(display_df) <- NULL
+names(display_df) <- c("Variable","Coefficient","Std_Error","P_value")
+kable(display_df)
+```
+
+_Figure-5_ shows that the p-value of some of the variables are greater than 0.05. Only the following variables have a p-value of less than 0.05:
+
+
+###_Figure-6: Model-1 (Logistic regression) variables, which have p-values greater than 0.05_
+```{r echo=FALSE}
+display_df <- display_df[display_df$P_value<= 0.05,]
+rownames(display_df) <- NULL
+kable(display_df)
+```
+
+Based on the p-values, these are the significant variables. But we will use mixed variable selection to identify significant variables. We cannot use p-value to determine if a variable is significant, since there is always 5% chance (assuming 95% significance level) that we might have obtained a p-value of less than 0.05 (or 5%) just by chance. We therefore need to use a variable selection method in order to identify the important variables. 
+
+The _stepAIC()_ function of MASS library is now used to identify the significant variables. These variables are used to build _Model-1_. The variable coefficients and p-values of the variables are displayed in _Figure-7_.
+
+###_Figure-7: Model-1, built using significant variables only_
+```{r echo=FALSE}
+glm.fit1 <- glm(formula = TARGET_FLAG ~ KIDSDRIV + NA_AGE + HOMEKIDS + YOJ + 
+    INCOME + NA_HOME_VAL + TRAVTIME + BLUEBOOK + TIF + OLDCLAIM + 
+    CLM_FREQ + MVR_PTS + DUMMY_HOME_OWNER + DUMMY_MSTATUS + DUMMY_PARENT1 + 
+    DUMMY_NO_HS + DUMMY_HS + DUMMY_Clerical + DUMMY_Doctor + 
+    DUMMY_Manager + DUMMY_Blue_Collar + DUMMY_URBANICITY + DUMMY_CAR_USE + 
+    DUMMY_MINI_VAN + DUMMY_Pickup + DUMMY_Sports_Car + DUMMY_REVOKED, 
+    family = "binomial", data = train_df_mod[, -2])
+
+#summary(glm.fit1)
+display_df <- data.frame(summary(glm.fit1)$coefficients)
+display_df <- display_df[,-3]
+Variable <- rownames(display_df)
+display_df <- cbind(Variable,display_df)
+rownames(display_df) <- NULL
+names(display_df) <- c("Variable","Coefficient","Std_Error","P_value")
+kable(display_df)
+```
+
+_Figure-7_ shows that we still have some variables included in the model that have a high p-value (greater than 0.05). Even though we have variables with higher p-values, we still want to include them in the model since there is always a chance of getting Type-2 error, and the variable selection method avoids type-1 and type-2 errors.
+
+Using logistic regression, we obtained the following model (_Model-1_):
+
+$$P(TARGET\_FLAG=1) = \frac{e^{f(x)}}{1+e^{f(x)}}$$
+
+where 
+$$f(x)=-2.9873679 + 0.3840843KIDSDRIV+ 2.0853961NA\_AGE+$$
+$$0.0536735HOMEKIDS+-0.0119663YOJ-0.0000049INCOME$$
+$$-0.2864266NA\_HOME\_VAL+0.014592TRAVTIME-0.0000243BLUEBOOK$$
+$$-0.0555523TIF-0.0000139OLDCLAIM+0.1976401CLM\_FREQ$$
+$$0.1121727MVR\_PTS-0.3359639DUMMY\_HOME\_OWNER-0.467941DUMMY\_MSTATUS+$$
+$$0.3651455DUMMY\_PARENT1+0.3579248DUMMY\_NO\_HS+0.3929838DUMMY\_HS+$$
+$$0.2569926DUMMY\_Clerical+-0.4239305DUMMY\_Doctor-0.6878651DUMMY\_Manager+$$
+$$0.1749694DUMMY\_Blue\_Collar+2.394212DUMMY\_URBANICITY+0.6983876DUMMY\_CAR\_USE$$
+$$-0.6897985DUMMY\_MINI\_VAN+-0.1189946DUMMY\_Pickup+0.2805493DUMMY\_Sports\_Car+$$
+$$0.8862538DUMMY\_REVOKED$$
+
+If a variable has a positive coefficient, then the probability of filing the claim increases (given all other variables are constant), else the probability decreases. Based on this criteria, we can make the following inferences:
+
+* The variables NA_AGE and DUMMY_URBANICITY have bigger coefficients (when compared to the other variables). This implies that these two variables increase the probability of TARGET_FLAG=1, given the other variables are constant. 
+
+
+* Additionally, the probability of filing a claim increases 
+
+    + if kids drive the car (KIDSDRIV=1) 
+  
+    + if the family has kids (HOMEKIDS=1) 
+  
+    + if travel time is more (TRAVTIME)
+  
+    + if claim frequency is more (CLM_FREQ)
+  
+    + if MVR_PTS is more
+  
+    + if the driver is a single parent (DUMMY_PARENT1=1)
+  
+    + If education level is less than or equal to the high school (DUMMY_NO_HS=1, DUMMY_HS=1)
+  
+    + if the job is clerical (DUMMY_Clerical), or blue collar(DUMMY_Blue_Collar=1)
+  
+    + if the car is used commercially (DUMMY_CAR_USE=1)
+  
+    + if the car is a sports car (DUMMY_Sports_Car=1)
+  
+    + if the license is revoked (DUMMY_REVOKED=1)
+
+  
+* The claim probability decreases with the following an increase in the following variables or if the variable is enabled (in case of dummy or NA place holder variables):
+    
+    + Years in Job (YOJ) INCOME, NA_HOME_VAL, BLUEBOOK, TIF, OLDCLAIM, DUMMY_HOME_OWNER, DUMMY_MSTATUS, DUMMY_DOCTOR, DUMMY_Manager, DUMMY_MINI_Van, DUMMY_PICKUP
+
+* The extent of the probability change depends on the coefficient of the corresponding variable
+    
+* In all other cases the probability remains unchanged
+
+###Building _Model-2_
+
+We will build _Model-2_ by raising all the _Model_1_ variables to the power of 2, and subsequently applying the _stepAIC()_ function for variable selection. This process has gives us the following model:
+
+###_Figure-8: Model-2, built using Model-1 variables raised to the power of 2_
+
+```{r echo=FALSE}
+glm.fit2 <- glm(formula = TARGET_FLAG ~ poly(KIDSDRIV,2) + NA_AGE + poly(HOMEKIDS,2) + poly(YOJ,2) + 
+    poly(INCOME,2) + NA_HOME_VAL + poly(TRAVTIME,2) + poly(BLUEBOOK,2) + poly(TIF,2) + poly(OLDCLAIM,2) + 
+    poly(CLM_FREQ,2) + poly(MVR_PTS,2) + DUMMY_HOME_OWNER + DUMMY_MSTATUS + DUMMY_PARENT1 + 
+    DUMMY_NO_HS + DUMMY_HS + DUMMY_Clerical + DUMMY_Doctor + 
+    DUMMY_Manager + DUMMY_Blue_Collar + DUMMY_URBANICITY + DUMMY_CAR_USE + 
+    DUMMY_MINI_VAN + DUMMY_Pickup + DUMMY_Sports_Car + DUMMY_REVOKED, 
+    family = "binomial", data = train_df_mod[, -2])
+
+#summary(glm.fit2)
+#stepAIC(glm.fit2)
+
+glm.fit2 <- glm(formula = TARGET_FLAG ~ poly(KIDSDRIV, 2) + NA_AGE + poly(YOJ, 
+    2) + poly(INCOME, 2) + NA_HOME_VAL + poly(TRAVTIME, 2) + 
+    poly(BLUEBOOK, 2) + poly(TIF, 2) + poly(OLDCLAIM, 2) + poly(CLM_FREQ, 
+    2) + poly(MVR_PTS, 2) + DUMMY_HOME_OWNER + DUMMY_MSTATUS + 
+    DUMMY_PARENT1 + DUMMY_NO_HS + DUMMY_HS + DUMMY_Clerical + 
+    DUMMY_Doctor + DUMMY_Manager + DUMMY_Blue_Collar + DUMMY_URBANICITY + 
+    DUMMY_CAR_USE + DUMMY_MINI_VAN + DUMMY_Pickup + DUMMY_Sports_Car + 
+    DUMMY_REVOKED, family = "binomial", data = train_df_mod[, 
+    -2])
+
+display_df <- data.frame(summary(glm.fit2)$coefficients)
+display_df <- display_df[,-3]
+Variable <- rownames(display_df)
+display_df <- cbind(Variable,display_df)
+rownames(display_df) <- NULL
+names(display_df) <- c("Variable","Coefficient","Std_Error","P_value")
+kable(display_df)
+```
+
+
+Unlike _Model-1_, _Model-2_ cannot be easily interpreted, since _Model-2_ has quadratic terms. So we are not presenting the effect of a variable on the probability of claim for _Model-2_. However we will still test _Model-2_ for performance using ROC and 5-fold Cross Validation technique.
+
+##Building _Model-3_
+
+We will use K Nearest Neighbors(KNN) to build the third model. KNN works by finding K nearest observations for the input value, and calculating the probability that the input observation belongs to a specific class based on the identified K neighbors. The optimal number of neighbors is found by dividing the given data set into two data sets: training and test data. The training data set is used to predict the output of the test dataset's observations for various values of K. The value of K at which we get the minimum test error, will be selected as the optimal value of K. 
+
+We first randomly divide our training data frame(train_df_mod) into two data frames, knn_train and knn_test such that knn_train will have 80% of the observations from train_df_mod, while the knn_test will have the remaining 20% of the observations from our training data (train_df_mod). Also the input variables are scaled before finding the optimal k value (Scaling refers to subtraction of variable's mean from the variable's value, and dividing the result by the variable's standard deviation). As the value of k increases, the flexibility of the model decreases. In other words as the value of K increases,the bias of the model increases, and the variance of the model decreases. We therefore must select an optimal value of K at which both the bias and variance are minimum. The following figure displays the error rate at various values of K, when KNN algorithm is applied on the training data set. From this figure, we can find that at K=19, we have the minimum error.  
+
+###_Figure-8: Finding the optimal value of K for KNN algorithm_
+```{r echo=FALSE}
+set.seed(123)
+
+knn_test_ind <- sample(1:8160,round(.2*8160))
+
+knn_test <- train_df_mod[knn_test_ind,]
+
+knn_train <- train_df_mod[-knn_test_ind,]
+
+knn_test_actual <- knn_test$TARGET_FLAG
+knn_train_actual <- knn_train$TARGET_FLAG
+
+knn_test_actual <- as.factor(knn_test_actual)
+knn_train_actual <- as.factor(knn_train_actual)
+
+knn_test <- scale(train_df_mod[knn_test_ind,c(-1,-2)])
+knn_train <- scale(train_df_mod[-knn_test_ind,c(-1,-2)])
+
+error <- vector(length=30) 
+
+for(i in 1:30)
+  {
+     k <- knn(knn_train,knn_test,knn_train_actual,k=i)
+
+     error[i] <- mean(k!=knn_test_actual)
+}
+
+display_df <- data.frame(k=1:30,error=error)
+
+
+ggplot(data=display_df,aes(x=k,y=error))+
+  geom_point(size=3)+
+  geom_line()
+
+```
+
+Sine KNN is a non-parametric model, we cannot interpret the model.
+
+##Model evaluation
+
+We will evaluate _Model-1_, _Model-2_ and _Model-3_ using ROC. 
+
+###Evaluating _Model-1_ performance
+
+The following figure shows the ROC curve for _Model-1_. The Area Under the Curve (AUC) for this model is 0.8134. 
+
+###Figure-9: ROC curve for _Model-1_
+```{r echo=FALSE,warning=FALSE}
+#actual <- train_df_mod$TARGET_FLAG
+prob <- predict(glm.fit1,type="response")
+#predicted <- ifelse(prob>=0.28,1,0)
+#conf_matrix <- table(predicted,actual)
+#conf_matrix
+
+#confusionMatrix(conf_matrix,positive = "1")
+
+roc_obj = roc(response=train_df_mod$TARGET_FLAG,predictor=prob,
+levels=rev(levels(as.factor(train_df_mod$TARGET_FLAG))))
+plot.roc(roc_obj)
+```
+
+###Evaluating _Model-2_ performance
+
+The following figure shows the ROC curve for _Model-2_. The Area Under the Curve (AUC) for this model is 0.8167. 
+
+###Figure-10: ROC curve for _Model-2_
+```{r echo=FALSE,warning=FALSE}
+#actual <- train_df_mod$TARGET_FLAG
+prob <- predict(glm.fit2,type="response")
+#predicted <- ifelse(prob>=0.28,1,0)
+#conf_matrix <- table(predicted,actual)
+#conf_matrix
+
+#confusionMatrix(conf_matrix,positive = "1")
+
+roc_obj = roc(response=train_df_mod$TARGET_FLAG,predictor=prob,
+levels=rev(levels(as.factor(train_df_mod$TARGET_FLAG))))
+plot.roc(roc_obj)
+
+```
+
+###Evaluating _Model-3_ performance
+
+The following figure shows the ROC curve for _Model-3_. The Area Under the Curve (AUC) for this model is 0.7991. 
+
+###Figure-11: ROC curve for _Model-3_
+
+```{r setup, include=FALSE}
+#The following block of code is needed to handle attributes(.Last.value) in 
+#R Mark down docs.
+#This code is given at:
+#http://stackoverflow.com/questions/31475226/using-last-value-in-rmarkdown-knitr
+
+unlockBinding("knit_handlers", getNamespace("knitr"))
+evalq(
+  assign(
+    "knit_handlers", 
+    function(fun, options) {
+      if (!is.function(fun)) fun = knit_print
+      if (length(formals(fun)) < 2)
+        stop("the chunk option 'render' must be a function of the form ",
+             "function(x, options) or function(x, ...)")
+      merge_list(default_handlers, list(value = function(x, visible) {
+        unlockBinding(".Last.value", .BaseNamespaceEnv)
+        assign(".Last.value", x, .BaseNamespaceEnv)
+        lockBinding(".Last.value", .BaseNamespaceEnv)
+        if (visible) fun(x, options = options)
+      }))
+     }
+  ), 
+  getNamespace("knitr")
+)
+lockBinding("knit_handlers", getNamespace("knitr"))
+```
+
+```{r echo=FALSE,warning=FALSE}
+knn_train <- train_df_mod
+actual <- knn_train$TARGET_FLAG
+knn_train <- scale(knn_train[,c(-1,-2)])
+prob <- knn(knn_train,knn_train,actual,k=20,prob=TRUE)
+
+prob <- attributes(.Last.value)$prob
+
+#prob <- as.vector(prob)
+
+roc_obj = roc(response=actual,predictor=prob,
+levels=rev(levels(as.factor(actual))))
+plot.roc(roc_obj)
+
+```
+
+The AUC of the three models is almost same (_Model-3_ has the least AUC). Since _Model-3_ is based on non-parametric model, we drop this model from further consideration, since non-parametric models are complex in nature and have high variance. Since the AUC for _Model-1_ and _Model-2_ are approximately same, we may drop _Model-2_ since, _Model-2_ is a quadratic model (more complex than _Model-1_). However we will check the cross validation error, and determine which model should be considered.
+
+```{r echo=FALSE}
+cv_1 <- cv.glm(train_df_mod,glm.fit1,K=5)$delta[1]
+cv_2 <- cv.glm(train_df_mod,glm.fit2,K=5)$delta[1]
+```
+
+A 5 fold cross validation for _Model-1_ and _Model-2_ has given approximately the same error (_Model-1_ Cross validation error is `r cv.glm(train_df_mod,glm.fit1,K=5)$delta[1]`, while _Model-2_ Cross Validation error is `r cv.glm(train_df_mod,glm.fit2,K=5)$delta[1]`.
+
+Since the AUC and Cross Validation errors are similar for both _Model-1_ and _Model-2_, we reject _Model-2_, since this model is complex, when compared to _Model-1_ (_Model-1_ does not have any quadratic terms).
+
+
+###Computing the optimal threshold for P(TARGET_FLAG=1)
+
+Let us find the accuracy, sensitivity and other performance details of _Model-1_. The model uses 0.5 as the threshold i.e., if the predicted probability of TARGET_FLAG = 1 is greater than or equal to 0.5, then the model predicts the target class as 1, else 0.
+
+###Figure-12: _Model-1_ performance details with threshold=0.5
+```{r echo=FALSE}
+actual <- train_df_mod$TARGET_FLAG
+prob <- predict(glm.fit1,type="response")
+predicted <- ifelse(prob>=0.5,1,0)
+conf_matrix <- table(predicted,actual)
+#conf_matrix
+confusionMatrix(conf_matrix,positive = "1")
+
+```
+
+The accuracy of the model is 79%, while the sensitivity is just 42%. This means our model is not doing well in predicting the true positive cases. But this model is better than the NULL model (which predicts all the cases as 0. The NULL model has 0 sensitivity and 0.74 accuracy. See _Figure-3_). The low sensitivity of _Model-1_ can be fixed by reducing the threshold to a value lesser than 0.5. Reducing the threshold will decrease the model's accruacy, but it will increase the sensitivity of the model. We have to identify an optimal threshold at which both the sensitivity and accruacy are maximized. We identify the optimal threshold value by plotting the accuracy and sensitivity of the model at various threshold points. 
+
+
+###Figure-13: Threshold vs sensitivity and accuracy plot
+```{r echo=FALSE, warning=FALSE}
+threshold <- seq(from=0.01,to=.99,by=.01)
+
+actual <- train_df_mod$TARGET_FLAG
+prob <- predict(glm.fit1,type="response")
+acc <- vector()
+sens <- vector()
+for(i in 1:length(threshold))
+{
+
+predicted <- ifelse(prob>=threshold[i],1,0)
+conf_matrix <- table(predicted,actual)
+if(nrow(conf_matrix) == 1) break()
+
+cnf <- confusionMatrix(conf_matrix,positive = "1")
+#names(cnf)
+acc[i] <- cnf$overall["Accuracy"]
+sens[i] <- cnf$byClass["Sensitivity"]
+
+}
+
+display_df <- data.frame(Legend="accuracy",value=acc[1:length(threshold)],threshold=threshold)
+display_df <- rbind(display_df,data.frame(Legend="sensitivity",value=sens[1:length(threshold)],threshold=threshold))
+
+ggplot(data=display_df,aes(x=threshold,y=value,color=Legend))+
+  geom_point()+
+  geom_vline(xintercept = .28,colour="blue", linetype = "longdash")+
+  annotate("text",label="Optimal Threshold=0.28", x = .4, y = .9, size = 3, colour = "blue")+
+  labs(title="Sensitivity vs Accuracy plot",x="Threshold",y="Sensitivity and Accuracy")
+
+```
+
+From _Figure-13_ we can infer that at a threshold value of 0.28, we are getting an accuracy of approximately 0.74 and sensitivity of approximately 0.74. The accuracy is equal to NULL model, but the sensitivity is way above NULL model. The confusion matrix and other performance metrics of _Model-1_ at 0.28 threshold value is displayed below in _Figure-14_. 
+
+
+###Figure-14: _Model-1_ performance details with threshold=0.28
+```{r echo=FALSE}
+actual <- train_df_mod$TARGET_FLAG
+prob <- predict(glm.fit1,type="response")
+predicted <- ifelse(prob>=0.28,1,0)
+conf_matrix <- table(predicted,actual)
+#conf_matrix
+confusionMatrix(conf_matrix,positive = "1")
+
+```
+
+_Figure-14_ shows that the accuracy of the model has dcreased but its sensitivity has increased.
+
+###Model building for TARGET_AMT
+
+To predict the TARGET_AMT, we will create two new variables (PROB and TARGET_FLAG_PRED) in train_df_mod data frame. The PROB variable will contain the value probability that TARGET_FLAG=1, and the other variable TARGET_FLAG_PRED will contain the predicted TARGET_FLAG value. We cannot use the TARGET_FLAG variable in our model since this variable needs to be predicted first, and based on this value, the TARGET_AMT variable's value should be predicted. 
+
+Our strategy is to fit a linear regression model for TARGET_AMT variable, using all the variables except the TARGET_FLAG variable. In the place of TARGET_FLAG we will use TARGET_FLAG_PRED variable. From the linear model, we will identify the important variables using variables selection method (_stepAIC()_) function. Then the model is created using just the important variables identified by _stepAIC()_ function. We call that model as _Model-reg-1_. Based on the residual plots of _Model-reg-1_ we will transform perform any required transformations and build other models.
+
+
+###Building _Model-reg-1 regression model
+
+Using _glm()_ function of R, followed by the _stepAIC()_ function, the following linear model is produced: 
+
+###Figure-15: _Model-reg-1_ coefficients, std. deviations and p-values
+
+```{r echo=FALSE}
+train_df_mod$PROB <- predict(glm.fit1,type="response")
+
+train_df_mod$TARGET_FLAG_PRED <- ifelse(train_df_mod$PROB>=0.28,1,0)
+
+glm.reg.fit1 <- glm(data = train_df_mod[,-1],TARGET_AMT~.)
+#stepAIC(glm.reg.fit1)
+glm.reg.fit1 <- glm(formula = TARGET_AMT ~ BLUEBOOK + MVR_PTS + CAR_AGE + DUMMY_SEX + 
+    DUMMY_HS + DUMMY_REVOKED + PROB, data = train_df_mod[, -1])
+
+display_df <- data.frame(summary(glm.reg.fit1)$coefficients)
+display_df <- display_df[,-3]
+Variable <- rownames(display_df)
+display_df <- cbind(Variable,display_df)
+rownames(display_df) <- NULL
+
+names(display_df) <- c("Variable","Coefficient","Std_Error","P_value")
+#names(display_df) <- c("Coefficient","Std_Error","P_value")
+kable(display_df)
+```
+
+_Figure-15_ shows that, except the PROB and BLUEBOOK variables p-values, all other variable's p-values are pretty high (greater than 0.05). However we will consider all the variables in the model, since these are the significant variables identified by _stepAIC()_ variable selection method. 
+
+_Model_reg-1_ is formally defined as:
+TARGET_AMT = TARGET_FLAG_PRED(-413.148 + 0.029125BLUEBOOK+ 46.757773MVR_PTS 
+-17.680651CAR_AGE+ 170.434198DUMMY_SEX -187.786190DUMMY_HS-300.711046DUMMY_REVOKED+ 
+5835.0180201PROB)
+
+We are multiplying the regression model obtained with TARGET_FLAG_PROD, since we want to make the TARGET_AMT as 0, whenever we predict the TARGET_FLAG as 0. Also from the model we can infer that the PROB coefficient is very huge when compared to the other coefficients. Surprisingly if someone's license is revoked, then the claim amount might decrease (since DUMMY_REVOKED has a coefficient of -300). But if MVR_PTS are high, then the claim amount will increase. The claim amount for males is also higher (by about 170\$) than females, since DUMMY_SEX has a coefficient of 170. If the license is revoked, then the claim amount will decrease. If the driver has a high school degree then the claim amount will decrease.  
+
+Let us plot the residual plots of the _Model-reg-1_ model. The residual plots and the $R^2$ calculated for this model does not consider the TARGET_FLAG_PRED (i.e., we will consider the TARGET_FLAG_PRED=1 always, to plot the residual plot and while computing the model's $R^2$).
+
+###Figure-16: Residual plots of _Model-reg-1_
+```{r echo=FALSE}
+par(mfrow=c(2,2))
+plot(glm.reg.fit1)
+```
+
+The residual plot does not have any specific pattern, but clearly it has non-constant variance. The Q-Q plot shows that the errors are not normally distributed. Perhaps applying a log transformation to the TARGET_AMT might make the errors normally distributed. The $R^2$ of _Model-reg-1_ is approximately 0.075 (which is pretty low). But given that the predicted TARGET_AMT is based on the predicted probability of TARGET_FLAG=1, we believe this is the best possible model we can obtain in the given time frame. In future we would like to evaluate if we can improve the predictions using non-parametric methods such as neural networks, Random forests.
+
+##Conclusion
+
+In summary we will use the following model to predict the P(TARGET_FLAG=1):
+
+
+$$P(TARGET\_FLAG=1) = \frac{e^{f(x)}}{1+e^{f(x)}}$$
+
+where 
+
+$$f(x)=-2.9873679 + 0.3840843KIDSDRIV+ 2.0853961NA\_AGE+$$
+$$0.0536735HOMEKIDS+-0.0119663YOJ-0.0000049INCOME$$
+$$-0.2864266NA\_HOME\_VAL+0.014592TRAVTIME-0.0000243BLUEBOOK$$
+$$-0.0555523TIF-0.0000139OLDCLAIM+0.1976401CLM\_FREQ$$
+$$0.1121727MVR\_PTS-0.3359639DUMMY\_HOME\_OWNER-0.467941DUMMY\_MSTATUS+$$
+$$0.3651455DUMMY\_PARENT1+0.3579248DUMMY\_NO\_HS+0.3929838DUMMY\_HS+$$
+$$0.2569926DUMMY\_Clerical+-0.4239305DUMMY\_Doctor-0.6878651DUMMY\_Manager+$$
+$$0.1749694DUMMY\_Blue\_Collar+2.394212DUMMY\_URBANICITY+0.6983876DUMMY\_CAR\_USE$$
+$$-0.6897985DUMMY\_MINI\_VAN+-0.1189946DUMMY\_Pickup+0.2805493DUMMY\_Sports\_Car+$$
+$$0.8862538DUMMY\_REVOKED$$
+
+Using the threshold value of 0.28, we will classify TARGET_FLAG as 1 whenever the P(TARGET_CLAG) is greater than or equal to 0.28, else TARGET_FLAG is predicted as 0. Once the TARGET_FLAG is determined, we will use the following model to predict the TARGET_AMT:
+
+$$TARGET\_AMT = TARGET\_FLAG\_PRED(-413.148 + 0.029125BLUEBOOK+ 46.757773MVR\_PTS$$ 
+$$-17.680651CAR\_AGE+ 170.434198DUMMY\_SEX -187.786190DUMMY\_HS-300.711046DUMMY\_REVOKED+$$ 
+$$5835.0180201PROB)$$
+
+where PROB=P(TARGET_FLAG=1) 
+
+Using the above two models, we predicted the TARGET_FLAG and TARGET_AMT for the test data set, and the data set is submitted along with this project report for evaluation.
+
+```{r echo=FALSE}
+#glm.fit1
+prob <- predict(glm.fit1,test_df,type="response")
+test_df$PROB <- predict(glm.fit1,test_df,type="response")
+test_df$TARGET_FLAG <- ifelse(prob >= 0.28, 1, 0)
+test_df$TARGET_FLAG_PRED <- ifelse(prob >= 0.28, 1, 0)
+test_df$TARGET_AMT <- test_df$TARGET_FLAG_PRED * (predict(glm.reg.fit1,test_df))
+#head(test_df)
+write_test_df <- read.csv("insurance-evaluation-data.csv")
+write_test_df$TARGET_FLAG <- test_df$TARGET_FLAG
+write_test_df$TARGET_AMT <- test_df$TARGET_AMT
+write.csv(write_test_df,file="test_result.csv",row.names = FALSE)
+
+
+```
+
+\newpage
+
+#Appendix-A
+
+The summary information of the modified training data set is displayed in the below figure (Figure A.1)
+
+###Figure-A.1: Summary of all the varibles in the modified training data set
+
+```{r echo=FALSE}
+summary(train_df_mod)
+```
+
+
+\newpage
+
+#Appendix-B
+
+The R code to implement and test the models is given below:
+
+
+
+```{r eval=FALSE, warning=FALSE,include=FALSE}
+#Include all the required libraries
+
+library(knitr)
+library(ggplot2)
+library(reshape2)
+library(gridExtra)
+library(boot)
+library(pander)
+library(pander)
+library(gridExtra)
+library(MASS)
+library(caret)
+library(pROC)
+library(class)
+
+#Reading the files to data frames
+setwd("C:/Users/Sekhar/Documents/R Programs/Business Analytics/HW4")
+train_df <- read.csv("insurance_training_data.csv")
+test_df <- read.csv("insurance-evaluation-data.csv")
+```
+
+
+```{r eval=FALSE, warning=FALSE}
+###*Figure-2: Summary of the training data set*
+summary(train_df)
+```
+```{r eval=FALSE}
+###*Figure-3: TARGET_FLAG classes proportion*
+
+display_df <- data.frame(table(train_df$TARGET_FLAG))
+display_df$perc <- as.character
+(round(100*display_df$Freq/sum(display_df$Freq),2))
+#display_df$perc <- round(100*display_df$Freq/sum(display_df$Freq),2)
+display_df$perc <- paste(display_df$perc,"%",sep="")
+
+names(display_df) <- c("TARGET_FLAG", "Count", "Percentage")
+
+ggplot(data = display_df, aes(x=TARGET_FLAG, y=Count, 
+                              fill = TARGET_FLAG, label = Percentage)) +
+  geom_bar(stat = "identity", position = "dodge",width=0.5) +
+  geom_text(position = position_dodge(width = .9),vjust=0)
+  
+```
+
+
+```{r eval=FALSE, warning=FALSE}
+###*Figure-4: Modified training data set's variables*
+
+#Add an indicator variable, to distinguish the data sets
+train_df <- cbind(indicator="Train",train_df)
+test_df <- cbind(indicator="Test",test_df)
+
+#Combine  the test and train data sets
+df <- rbind(train_df,test_df)
+#summary(df)
+
+#AGE DUMMY Variable
+df$NA_AGE <- df$AGE
+df$NA_AGE[!is.na(df$NA_AGE)] <- 0
+df$NA_AGE[is.na(df$NA_AGE)] <- 1
+
+df$AGE[is.na(df$AGE)] <- median(df$AGE,na.rm=TRUE)
+
+#YOJ Dummy variable
+df$NA_YOJ <- df$YOJ
+df$NA_YOJ[!is.na(df$NA_YOJ)] <- 0
+df$NA_YOJ[is.na(df$NA_YOJ)] <- 1
+df$YOJ[is.na(df$YOJ)] <- median(df$YOJ,na.rm=TRUE)
+
+#Clean INCOME Data
+df$INCOME <- gsub(",","",df$INCOME)
+df$INCOME <- as.numeric(gsub("$","",df$INCOME,fixed = TRUE))
+
+#Income data has NA values, so create NA_INCOME variable also
+df$NA_INCOME <- ifelse(is.na(df$INCOME),1,0)
+
+df$INCOME[is.na(df$INCOME)] <- median(df$INCOME,na.rm=TRUE)
+
+
+df$HOME_VAL <- gsub(",","",df$HOME_VAL)
+
+df$HOME_VAL <- as.numeric(gsub("$","",df$HOME_VAL,fixed = TRUE))
+
+df$NA_HOME_VAL <- ifelse(is.na(df$HOME_VAL),1,0)
+
+
+
+#df$HOME_VAL[is.na(df$HOME_VAL)] <- median(df$HOME_VAL,na.rm=TRUE)
+df$HOME_VAL[is.na(df$HOME_VAL)] <- 0
+
+df$DUMMY_HOME_OWNER <- ifelse(df$HOME_VAL> 0,1,0)
+
+df$BLUEBOOK <- gsub(",","",df$BLUEBOOK)
+df$BLUEBOOK <- as.numeric(gsub("$","",df$BLUEBOOK,fixed = TRUE))
+
+
+df$OLDCLAIM  <- gsub(",","",df$OLDCLAIM )
+df$OLDCLAIM  <- as.numeric(gsub("$","",df$OLDCLAIM,fixed = TRUE))
+
+df$DUMMY_MSTATUS <- ifelse(df$MSTATUS=="z_No",0,1)
+
+df$DUMMY_SEX <- ifelse(df$SEX=="z_F",0,1)
+
+df$DUMMY_PARENT1 <- ifelse(df$PARENT1=="No",0,1)
+ 
+df$NA_CAR_AGE <- df$CAR_AGE
+df$NA_CAR_AGE[!is.na(df$NA_CAR_AGE)] <- 0
+df$NA_CAR_AGE[is.na(df$NA_CAR_AGE)] <- 1
+df$CAR_AGE[is.na(df$CAR_AGE)] <- median(df$CAR_AGE,na.rm=TRUE)
+df <- df[df$CAR_AGE>=0,]
+#df$CAR_AGE[df$CAR_AGE < 0] <- -1*df$CAR_AGE[df$CAR_AGE < 0]
+
+
+
+df$DUMMY_NO_HS <- ifelse(df$EDUCATION== "<High School",1,0)
+df$DUMMY_HS <- ifelse(df$EDUCATION== "z_High School",1,0)
+df$DUMMY_BACHELOR <- ifelse(df$EDUCATION== "Bachelors",1,0)
+df$DUMMY_MASTERS <- ifelse(df$EDUCATION== "Masters",1,0)
+
+df$DUMMY_Clerical <- ifelse(df$JOB== "Clerical",1,0)
+df$DUMMY_Doctor <- ifelse(df$JOB== "Doctor",1,0)
+df$DUMMY_Home_Maker <- ifelse(df$JOB== "Home Maker",1,0)
+df$DUMMY_Lawyer <- ifelse(df$JOB== "Lawyer",1,0)
+df$DUMMY_Manager <- ifelse(df$JOB== "Manager",1,0)
+df$DUMMY_Professional <- ifelse(df$JOB== "Professional",1,0)
+df$DUMMY_Student <- ifelse(df$JOB== "Student",1,0)
+df$DUMMY_Blue_Collar <- ifelse(df$JOB== "z_Blue Collar",1,0)
+
+df$DUMMY_URBANICITY <- ifelse(df$URBANICITY == "Highly Urban/ Urban",1,0)
+
+
+df$DUMMY_CAR_USE <- ifelse(df$CAR_USE == "Commercial",1,0)
+
+
+df$DUMMY_MINI_VAN <- ifelse(df$CAR_TYPE == "Minivan",1,0)
+
+df$DUMMY_Panel_Truck <- ifelse(df$CAR_TYPE == "Panel Truck",1,0)
+df$DUMMY_Pickup <- ifelse(df$CAR_TYPE == "Pickup",1,0)
+df$DUMMY_Sports_Car <- ifelse(df$CAR_TYPE == "Sports Car",1,0)
+df$DUMMY_Van <- ifelse(df$CAR_TYPE == "Van",1,0)
+
+df$DUMMY_RED_CAR <- ifelse(df$RED_CAR == "yes",1,0)
+df$DUMMY_REVOKED <- ifelse(df$REVOKED == "Yes",1,0)
+
+#summary(df)
+#head(df)
+
+train_df <- df[df$indicator == "Train",c(-1)]
+test_df <- df[df$indicator == "Test",c(-1)]
+
+#head(train_df)
+
+#names(train_df)
+
+#Let us prepare another data frame to build models
+train_df_mod <- train_df[,c("TARGET_FLAG",
+"TARGET_AMT",
+"KIDSDRIV",
+"AGE",
+"HOMEKIDS",
+"YOJ",
+"INCOME",
+"HOME_VAL",
+"TRAVTIME",
+"BLUEBOOK",
+"TIF",
+"OLDCLAIM",
+"CLM_FREQ",
+"MVR_PTS",
+"CAR_AGE",
+"NA_AGE",
+"NA_YOJ",
+"NA_INCOME",
+"NA_HOME_VAL",
+"DUMMY_HOME_OWNER",
+"DUMMY_MSTATUS",
+"DUMMY_SEX",
+"DUMMY_PARENT1",
+"NA_CAR_AGE",
+"DUMMY_NO_HS",
+"DUMMY_HS",
+"DUMMY_BACHELOR",
+"DUMMY_MASTERS",
+"DUMMY_Clerical",
+"DUMMY_Doctor",
+"DUMMY_Home_Maker",
+"DUMMY_Lawyer",
+"DUMMY_Manager",
+"DUMMY_Professional",
+"DUMMY_Student",
+"DUMMY_Blue_Collar",
+"DUMMY_URBANICITY",
+"DUMMY_CAR_USE",
+"DUMMY_MINI_VAN",
+"DUMMY_Panel_Truck",
+"DUMMY_Pickup",
+"DUMMY_Sports_Car",
+"DUMMY_Van",
+"DUMMY_RED_CAR",
+"DUMMY_REVOKED"
+                            )]
+
+#head(train_df_mod)
+names(train_df_mod)
+```
+```{r eval=FALSE}
+glm.fit1 <- glm(data=train_df_mod[,-2],TARGET_FLAG~KIDSDRIV+
+AGE*NA_AGE+
+HOMEKIDS+
+YOJ*NA_YOJ+
+INCOME*NA_INCOME+
+HOME_VAL*NA_HOME_VAL+
+TRAVTIME+
+BLUEBOOK+
+TIF+
+OLDCLAIM+
+CLM_FREQ+
+MVR_PTS+
+CAR_AGE*NA_CAR_AGE+
+DUMMY_HOME_OWNER*NA_HOME_VAL+
+DUMMY_MSTATUS+
+DUMMY_SEX+
+DUMMY_PARENT1+
+DUMMY_NO_HS+
+DUMMY_HS+
+DUMMY_BACHELOR+
+DUMMY_MASTERS+
+DUMMY_Clerical+
+DUMMY_Doctor+
+DUMMY_Home_Maker+
+DUMMY_Lawyer+
+DUMMY_Manager+
+DUMMY_Professional+
+DUMMY_Student+
+DUMMY_Blue_Collar+
+DUMMY_URBANICITY +
+DUMMY_CAR_USE+
+DUMMY_MINI_VAN+
+DUMMY_Panel_Truck+
+DUMMY_Pickup+
+DUMMY_Sports_Car+
+DUMMY_Van+
+DUMMY_RED_CAR+
+DUMMY_REVOKED,family="binomial")
+
+#names(summary(glm.fit1))
+#stepAIC(glm.fit1)
+display_df <- data.frame(summary(glm.fit1)$coefficients)
+display_df <- display_df[,-3]
+Variable <- rownames(display_df)
+display_df <- cbind(Variable,display_df)
+rownames(display_df) <- NULL
+names(display_df) <- c("Variable","Coefficient","Std_Error","P_value")
+kable(display_df)
+```
+```{r eval=FALSE}
+###_Figure-6: Model-1 (Logistic regression) variables, 
+##which have p-values greater than 0.05_
+
+display_df <- display_df[display_df$P_value<= 0.05,]
+rownames(display_df) <- NULL
+kable(display_df)
+```
+
+
+
+```{r eval=FALSE}
+###_Figure-7: Model-1, built using significant variables only_
+
+glm.fit1 <- glm(formula = TARGET_FLAG ~ KIDSDRIV + NA_AGE + HOMEKIDS + YOJ + 
+    INCOME + NA_HOME_VAL + TRAVTIME + BLUEBOOK + TIF + OLDCLAIM + 
+    CLM_FREQ + MVR_PTS + DUMMY_HOME_OWNER + DUMMY_MSTATUS + DUMMY_PARENT1 + 
+    DUMMY_NO_HS + DUMMY_HS + DUMMY_Clerical + DUMMY_Doctor + 
+    DUMMY_Manager + DUMMY_Blue_Collar + DUMMY_URBANICITY + DUMMY_CAR_USE + 
+    DUMMY_MINI_VAN + DUMMY_Pickup + DUMMY_Sports_Car + DUMMY_REVOKED, 
+    family = "binomial", data = train_df_mod[, -2])
+
+#summary(glm.fit1)
+display_df <- data.frame(summary(glm.fit1)$coefficients)
+display_df <- display_df[,-3]
+Variable <- rownames(display_df)
+display_df <- cbind(Variable,display_df)
+rownames(display_df) <- NULL
+names(display_df) <- c("Variable","Coefficient","Std_Error","P_value")
+kable(display_df)
+```
+
+```{r eval=FALSE}
+###_Figure-8: Model-2, built using Model-1 variables raised to the power of 2_
+
+glm.fit2 <- glm(formula = TARGET_FLAG ~ poly(KIDSDRIV,2) + 
+                  NA_AGE + poly(HOMEKIDS,2) + poly(YOJ,2) + 
+    poly(INCOME,2) + NA_HOME_VAL + poly(TRAVTIME,2) + 
+      poly(BLUEBOOK,2) + poly(TIF,2) + poly(OLDCLAIM,2) + 
+    poly(CLM_FREQ,2) + poly(MVR_PTS,2) + DUMMY_HOME_OWNER + 
+      DUMMY_MSTATUS + DUMMY_PARENT1 + 
+    DUMMY_NO_HS + DUMMY_HS + DUMMY_Clerical + DUMMY_Doctor + 
+    DUMMY_Manager + DUMMY_Blue_Collar + DUMMY_URBANICITY +
+      DUMMY_CAR_USE + 
+    DUMMY_MINI_VAN + DUMMY_Pickup + DUMMY_Sports_Car +
+      DUMMY_REVOKED, 
+    family = "binomial", data = train_df_mod[, -2])
+
+#summary(glm.fit2)
+#stepAIC(glm.fit2)
+
+glm.fit2 <- glm(formula = TARGET_FLAG ~ 
+                  poly(KIDSDRIV, 2) + NA_AGE + poly(YOJ, 
+    2) + poly(INCOME, 2) + NA_HOME_VAL + 
+      poly(TRAVTIME, 2) + 
+    poly(BLUEBOOK, 2) + poly(TIF, 2) + poly(OLDCLAIM, 2) + 
+      poly(CLM_FREQ, 
+    2) + poly(MVR_PTS, 2) + DUMMY_HOME_OWNER + 
+      DUMMY_MSTATUS + 
+    DUMMY_PARENT1 + DUMMY_NO_HS + DUMMY_HS + 
+      DUMMY_Clerical + 
+    DUMMY_Doctor + DUMMY_Manager + DUMMY_Blue_Collar +
+      DUMMY_URBANICITY + 
+    DUMMY_CAR_USE + DUMMY_MINI_VAN + DUMMY_Pickup + 
+      DUMMY_Sports_Car + 
+    DUMMY_REVOKED, family = "binomial", data = train_df_mod[, 
+    -2])
+
+display_df <- data.frame(summary(glm.fit2)$coefficients)
+display_df <- display_df[,-3]
+Variable <- rownames(display_df)
+display_df <- cbind(Variable,display_df)
+rownames(display_df) <- NULL
+names(display_df) <- c("Variable","Coefficient","Std_Error","P_value")
+kable(display_df)
+```
+
+```{r eval=FALSE}
+###_Figure-8: Finding the optimal value of K for KNN algorithm_
+set.seed(123)
+
+knn_test_ind <- sample(1:8160,round(.2*8160))
+
+knn_test <- train_df_mod[knn_test_ind,]
+
+knn_train <- train_df_mod[-knn_test_ind,]
+
+knn_test_actual <- knn_test$TARGET_FLAG
+knn_train_actual <- knn_train$TARGET_FLAG
+
+knn_test_actual <- as.factor(knn_test_actual)
+knn_train_actual <- as.factor(knn_train_actual)
+
+knn_test <- scale(train_df_mod[knn_test_ind,c(-1,-2)])
+knn_train <- scale(train_df_mod[-knn_test_ind,c(-1,-2)])
+
+error <- vector(length=30) 
+
+for(i in 1:30)
+  {
+     k <- knn(knn_train,knn_test,knn_train_actual,k=i)
+
+     error[i] <- mean(k!=knn_test_actual)
+}
+
+display_df <- data.frame(k=1:30,error=error)
+
+
+ggplot(data=display_df,aes(x=k,y=error))+
+  geom_point(size=3)+
+  geom_line()
+
+```
+
+
+
+
+
+```{r eval=FALSE,warning=FALSE}
+###Figure-9: ROC curve for _Model-1_
+
+#actual <- train_df_mod$TARGET_FLAG
+prob <- predict(glm.fit1,type="response")
+#predicted <- ifelse(prob>=0.28,1,0)
+#conf_matrix <- table(predicted,actual)
+#conf_matrix
+
+#confusionMatrix(conf_matrix,positive = "1")
+
+roc_obj = roc(response=train_df_mod$TARGET_FLAG,predictor=prob,
+levels=rev(levels(as.factor(train_df_mod$TARGET_FLAG))))
+plot.roc(roc_obj)
+```
+
+```{r eval=FALSE,warning=FALSE}
+###Figure-10: ROC curve for _Model-2_
+
+#actual <- train_df_mod$TARGET_FLAG
+prob <- predict(glm.fit2,type="response")
+#predicted <- ifelse(prob>=0.28,1,0)
+#conf_matrix <- table(predicted,actual)
+#conf_matrix
+
+#confusionMatrix(conf_matrix,positive = "1")
+
+roc_obj = roc(response=train_df_mod$TARGET_FLAG,predictor=prob,
+levels=rev(levels(as.factor(train_df_mod$TARGET_FLAG))))
+plot.roc(roc_obj)
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+```{r eval=FALSE,warning=FALSE}
+knn_train <- train_df_mod
+actual <- knn_train$TARGET_FLAG
+knn_train <- scale(knn_train[,c(-1,-2)])
+prob <- knn(knn_train,knn_train,actual,k=20,prob=TRUE)
+
+prob <- attributes(.Last.value)$prob
+
+#prob <- as.vector(prob)
+
+roc_obj = roc(response=actual,predictor=prob,
+levels=rev(levels(as.factor(actual))))
+plot.roc(roc_obj)
+
+```
+
+```{r eval=FALSE}
+###Figure-12: _Model-1_ performance details with threshold=0.5
+
+actual <- train_df_mod$TARGET_FLAG
+prob <- predict(glm.fit1,type="response")
+predicted <- ifelse(prob>=0.5,1,0)
+conf_matrix <- table(predicted,actual)
+#conf_matrix
+confusionMatrix(conf_matrix,positive = "1")
+
+```
+
+```{r eval=FALSE, warning=FALSE}
+###Figure-13: Threshold vs sensitivity and accuracy plot
+threshold <- seq(from=0.01,to=.99,by=.01)
+
+actual <- train_df_mod$TARGET_FLAG
+prob <- predict(glm.fit1,type="response")
+acc <- vector()
+sens <- vector()
+for(i in 1:length(threshold))
+{
+
+predicted <- ifelse(prob>=threshold[i],1,0)
+conf_matrix <- table(predicted,actual)
+if(nrow(conf_matrix) == 1) break()
+
+cnf <- confusionMatrix(conf_matrix,positive = "1")
+#names(cnf)
+acc[i] <- cnf$overall["Accuracy"]
+sens[i] <- cnf$byClass["Sensitivity"]
+
+}
+
+display_df <- data.frame(Legend="accuracy",
+                         value=acc[1:length(threshold)],threshold=threshold)
+display_df <- rbind(display_df,data.frame(Legend="sensitivity",
+                                          value=sens[1:length(threshold)],threshold=threshold))
+
+ggplot(data=display_df,aes(x=threshold,y=value,color=Legend))+
+  geom_point()+
+  geom_vline(xintercept = .28,colour="blue", linetype = "longdash")+
+  annotate("text",label="Optimal Threshold=0.28", x = .4, 
+           y = .9, size = 3, colour = "blue")+
+  labs(title="Sensitivity vs Accuracy plot",x="Threshold",
+       y="Sensitivity and Accuracy")
+
+```
+
+
+```{r eval=FALSE}
+###Figure-14: _Model-1_ performance details with threshold=0.28
+
+actual <- train_df_mod$TARGET_FLAG
+prob <- predict(glm.fit1,type="response")
+predicted <- ifelse(prob>=0.28,1,0)
+conf_matrix <- table(predicted,actual)
+#conf_matrix
+confusionMatrix(conf_matrix,positive = "1")
+
+```
+```{r eval=FALSE}
+train_df_mod$PROB <- predict(glm.fit1,type="response")
+
+train_df_mod$TARGET_FLAG_PRED <- ifelse(train_df_mod$PROB>=0.28,1,0)
+
+glm.reg.fit1 <- glm(data = train_df_mod[,-1],TARGET_AMT~.)
+#stepAIC(glm.reg.fit1)
+glm.reg.fit1 <- glm(formula = TARGET_AMT ~ BLUEBOOK + MVR_PTS + CAR_AGE + DUMMY_SEX + 
+    DUMMY_HS + DUMMY_REVOKED + PROB, data = train_df_mod[, -1])
+
+display_df <- data.frame(summary(glm.reg.fit1)$coefficients)
+display_df <- display_df[,-3]
+Variable <- rownames(display_df)
+display_df <- cbind(Variable,display_df)
+rownames(display_df) <- NULL
+
+names(display_df) <- c("Variable","Coefficient","Std_Error","P_value")
+#names(display_df) <- c("Coefficient","Std_Error","P_value")
+kable(display_df)
+```
+```{r eval=FALSE}
+###Figure-16: Residual plots of _Model-reg-1_
+
+par(mfrow=c(2,2))
+plot(glm.reg.fit1)
+```
+```{r eval=FALSE}
+#glm.fit1
+prob <- predict(glm.fit1,test_df,type="response")
+test_df$PROB <- predict(glm.fit1,test_df,type="response")
+test_df$TARGET_FLAG <- ifelse(prob >= 0.28, 1, 0)
+test_df$TARGET_FLAG_PRED <- ifelse(prob >= 0.28, 1, 0)
+test_df$TARGET_AMT <- test_df$TARGET_FLAG_PRED * (predict(glm.reg.fit1,test_df))
+#head(test_df)
+write_test_df <- read.csv("insurance-evaluation-data.csv")
+write_test_df$TARGET_FLAG <- test_df$TARGET_FLAG
+write_test_df$TARGET_AMT <- test_df$TARGET_AMT
+write.csv(write_test_df,file="test_result.csv",row.names = FALSE)
+
+
+```
+
+
+```{r eval=FALSE}
+###Figure-A.1: Summary of all the varibles in the modified training data set
+
+summary(train_df_mod)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

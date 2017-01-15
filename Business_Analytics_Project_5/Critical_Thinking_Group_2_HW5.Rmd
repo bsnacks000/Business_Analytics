@@ -1,0 +1,1080 @@
+---
+title: "Homework5"
+author: "John DeBlase Sekhar Mekala Sonya Hong"
+date: "November 27, 2016"
+output: pdf_document
+---
+
+### Project Requirements
+
+The main goal of this project is to build several different count models that try to predict wine sales based on both marketing attributes and chemical properties of different wines. We are given 2 data sets: _training_ and _test_ data sets. The training data has input variables along with
+the observed response variable. 
+
+We will use the training data set to train our model, and the predictions
+obtained on the test data will be submitted as a project deliverable.  
+
+
+```{r, warning=F, echo=F, include=F}
+library(ggplot2)
+library(MASS)
+library(pscl)
+library(AER)
+library(mice)
+library(lattice)
+library(knitr)
+library(boot)
+library(reshape2)
+library(pscl)
+library(AICcmodavg)
+library(reshape2)
+library(gridExtra)
+```
+
+
+```{r, echo=F, include=F}
+
+setwd("~/Documents/CUNY/Data_Mining_621/Homework5")
+
+train = read.csv("wine-training-data.csv")
+train = train[,-1]  # drop INDEX column
+test_df = read.csv("wine-evaluation-data.csv")
+
+
+
+# All test data set code in Appendix
+
+
+# UTILITY FUNCTIONS
+check_NA = function(df){
+    apply(df,2,function(x){ sum(is.na(x))/length(x) })    
+}
+
+make_cor_heatmap = function(mydata){
+    # get reference here:
+    
+    cormat = round(cor(mydata),2)
+    
+    get_upper_tri = function(cormat){
+        cormat[lower.tri(cormat)]<- NA
+        return(cormat)
+    }
+    
+    melted_cormat = melt(get_upper_tri(cormat), na.rm =T) # melt matrix
+    
+    # return ggplot object
+    ggplot(data = melted_cormat, aes(Var2, Var1, fill = value))+
+        geom_tile(color = "white")+
+        scale_fill_gradient2(low = "blue", high = "red", mid = "white", 
+                             midpoint = 0, limit = c(-1,1), space = "Lab", 
+                             name="Pearson\nCorrelation") +
+        theme_minimal()+ 
+        theme(axis.text.x = element_text(angle = 45, vjust = 1, 
+                                         size = 12, hjust = 1))+
+        coord_fixed()
+}
+
+make_density_plots = function(){
+    
+    g1 <- ggplot(data=train,aes(FixedAcidity))+ geom_density()
+    g2 <- ggplot(data=train,aes(VolatileAcidity))+ geom_density() 
+    g3 <- ggplot(data=train,aes(CitricAcid))+ geom_density() 
+    g4 <- ggplot(data=train,aes(ResidualSugar))+ geom_density() 
+    g5 <- ggplot(data=train,aes(Chlorides))+ geom_density() 
+    g6 <- ggplot(data=train,aes(FreeSulfurDioxide))+ geom_density() 
+    g7 <- ggplot(data=train,aes(Density))+ geom_density() 
+    g8 <- ggplot(data=train,aes(pH))+ geom_density() 
+    g9 <- ggplot(data=train,aes(Sulphates))+ geom_density() 
+    g10 <- ggplot(data=train,aes(Alcohol))+ geom_density() 
+    g11 <- ggplot(data=train,aes(LabelAppeal))+ geom_density() 
+    g12 <- ggplot(data=train,aes(AcidIndex))+ geom_density() 
+    g13 <- ggplot(data=train,aes(TotalSulfurDioxide))+ geom_density() 
+    g14 <- ggplot(data=train,aes(AcidIndex))+ geom_density() 
+    g15 <- ggplot(data=train,aes(STARS))+ geom_density() 
+    
+    grid.arrange(g1,g2,g3,g4,g5,g6,g7, 
+                 g8,g9,g10,g11,g12,g13,g14,g15, ncol=3)
+}
+```
+
+
+## Data Exploration
+
+The training and test data sets contain the following variables:  
+
+### Figure 0: Variables for wine data set
+```{r, echo=F}
+# make a display df for the project
+colnames(train)
+```
+
+TARGET,the number of cases purchased, will be our response variable. According to theoretical effects from the documentation, higher numbers of stars and a nicer label suggest better sales. Other variables associated with the chemical makeup of wine do not have an obvious theoretical effect on the sale of wine.
+
+We will first summarize and construct density plots of the predictors in the training set in order to assess distribution and look for the presence of NA values. 
+
+
+### Figure 1: Summary data
+```{r, echo=F}
+summary(train[,-1])
+# check NA
+```
+
+Based on the above summary data and density plots found in **Appendix A**, the predictors appear to be normally distributed. There is a moderate to high presence of NA values in several of the chemical categories and STARS categories. 
+
+### Figure 2: Percentage of NA values
+```{r, echo=F}
+missing_values = check_NA(train) # drop stars 20% missing -> impute continuous vars later with mice
+
+barplot(missing_values,las=2) # barplot of missing values# drop stars 20% missing -> impute continuous vars later with mice
+```
+
+The variables Chlorides, FreeSulfurDioxide, TotalSulfurDioxide, pH, Sulphates and Alcohol have NA values that are less than 10% of the total observations. These continuous missing values can be imputed using a predictive mean matching algorithm from the mice package.
+
+About 26% of observations for the STARS variable contains an NA value. Due to STARS being regarded as a significant predictor based on the information in the above table, we will not drop the variable from the dataset, but instead create a dummy variable to flag NA values and impute missing values in the original based on median.
+
+Below is a summary and histogram of the distribution of the target variable. 
+
+
+### Figure 3: Summary of the TARGET variable
+```{r, echo=F}
+summary(train[1]) 
+```
+
+### Figure 4: Histogram of the TARGET variable
+```{r, echo=F}
+hist(train$TARGET,xlab="TARGET",main="Histogram of TARGET variable") # normal between 1-8 with excess zeros...   
+```
+
+The histogram and summary of our TARGET variable shows a normal distribution with a mean of 3 between purchases of 1 and 8 cases. The variable does contain an excessive amount of zeros. This is a good indicator that a zero-inflated model that takes into consideration both binomial and count regression for the TARGET variable might be appropriate for this dataset. 
+
+Finally, we will use a heatmap to look for any pronounced correlations between the target variable and predictors.
+
+### Figure 5: Heatmap of training dataset
+```{r, echo=F}
+make_cor_heatmap(train) 
+```
+
+The heatmap shows that there is little to no correlation amongst many of the chemical variables. We can see a slight negative correlation for AcidIndex and TARGET, as well as a slightly positive correlation between LabelAppeal and TARGET. 
+
+We will assess the correlations once again after missing variables have been imputed and the STARS dummy variable is created in the next section to see if these changes significantly impact our heatmap results in any way.
+
+
+### Assesment for Data Prepartion 
+
+* Impute all continuous variables with mice. Impute categorical variable STARS with median. Create dummy variable for STARS to indicate NA values in the dataset.
+
+* The dataset overall is highly un-correlated with normally distributed continuous variables. Only slight correlations are present with AcidIndex, LabelAppeal and possiblty STARS. The relationships of these variables will most likely be the primary focus of the investigation.
+
+* The TARGET count has an excess number of zeros but is otherwise normally distributed with a mean of 3. The count regression models will show which predictors will affect this number.  
+
+* The excess zeros indicate that zero-inflated models could be more relevant in the model building for the count-regression. Zero-inflated models will be built by seperating TARGET=0 from TARGET>0 and creating a TARGET CLASS variable(0,1). A binomial logistic regression will be fitted to TARGET CLASS alongside the count data in TARGET using Poisson and Negative Binomial models for TARGET>1. The zeroinfl() R function will also be used to create a singular zero-inflated model for comparison and evaluation.
+
+
+
+## Data Preparation
+
+```{r, echo=F}
+# make STARS NA dummy var
+train$STARS_dummyNA = ifelse(is.na(train$STARS),1,0) 
+train$STARS[is.na(train$STARS)] = median(train$STARS, na.rm = T)
+
+test_df$STARS_dummyNA = ifelse(is.na(test_df$STARS),1,0) 
+test_df$STARS[is.na(test_df$STARS)] = median(test_df$STARS, na.rm = T)
+```
+
+```{r, eval=F, echo=F}   
+# Code to impute data -- DO NOT EVALUATE IN RMD
+imputed_train = mice(train, m=1,maxit=10,meth='pmm',seed=500)
+densityplot(imputed_train) # imputations look good... 
+
+train2 = complete(imputed_train,1)
+save(train2,file = 'train2.rds')
+
+
+imputed_test = mice(test_df, m=1,maxit=10,meth='pmm',seed=500)
+#densityplot(imputed_test)  
+
+test_df = complete(imputed_test,1)
+```
+
+```{r, echo=F}
+setwd("~/Documents/CUNY/Data_Mining_621/Homework5")
+
+load('train2.rds')
+```
+
+```{r, echo=F}
+# Split into two datasets for zero inflated model and set target class in main dataset
+train_0 <- train2[train2$TARGET==0,]
+train_rest <- train2[train2$TARGET!=0,]
+
+train2$TARGET_CLASS <- ifelse(train2$TARGET==0, 0, 1)
+```
+
+After imputation and dummy variable creation, the modified set of variables for the training set is given below. Similar transformations will be made to the test set before any model is used for prediction.
+
+```{r,echo=F}
+colnames(train2)
+```
+
+We want to check the dataset for correlations now that data has been imputed and new variables added.
+
+### Figure 6: Heatmap after imputation and dummy variables added
+```{r,echo=F}
+make_cor_heatmap(train2)
+```
+
+The heatmap now shows a strong positive correlation between STARS and the TARGET. There is also a strong negative correlation between an NA value in STARS and LabelAppeal as well as a positive correlation with AcidIndex. The new TARGET_CLASS variable shows a strong negative correlation with missing STARS values and AcidIndex and a positive correlation with STARS.
+
+
+### Assessment for Model Building and Selection
+
+* Based on the results of the heatmap, particular attention will be paid to STARS, STARS_dummyNA, LabelAppeal and AcidIndex during model evaluation.
+
+* Both normal and zero-inflated poisson models will be built using stepwise forward and backward selection. Both normal and zero-inflated negative binomial models will be created using the same process. A binary logistic model alongside count models on subsetted training data will also be created.
+
+* In addition, two Multiple Linear Regression models will be built for comparison with the count models.
+
+* Results for all models will be Cross-validated with the cv.glm() function for model selection. 
+
+* We will test for overdispersion and build negative binomial models using the _disperionTest()_ function from the pscl package. If the overdispersion value is statistically significant, this will indicate whether a negative binomial model is more appropriate than a poisson model for this data.
+
+* If the binary logistic regression model is chosen, a confusion matrix and ROC curve will be calculated to evaluate model accuracy.
+
+
+## Model Building
+
+### Poisson Models
+
+_Poisson-Model-1_
+
+We will first build and interpret several different poisson models. Our first model will be a regular poisson model that does not take the excess zeros into account (that is, treats the 0 as normal count). We will use the _stepAIC()_ function to select variables using the forward and backward stepwise methods. 
+
+
+The coefficients for the first model (_Poisson-Model-1_) are given below. Note that the variables shown in the model are the significant variables identified by _stepAIC()_ function of R, using forward and backward stepwise variable selection method:
+
+```{r, echo=F}
+pois_all = glm(TARGET~FixedAcidity + VolatileAcidity + CitricAcid +ResidualSugar+
+    Chlorides + FreeSulfurDioxide + TotalSulfurDioxide + 
+    Density+pH+Sulphates+Alcohol+LabelAppeal +
+    AcidIndex +  STARS * STARS_dummyNA , family=poisson,data=train2)
+
+#stepAIC(pois_all)
+
+# results of stepAIC() 
+pois1 = glm(formula = TARGET ~ VolatileAcidity + Chlorides + FreeSulfurDioxide + 
+    TotalSulfurDioxide + Density + pH + Sulphates + Alcohol + 
+    LabelAppeal + AcidIndex + STARS + STARS_dummyNA, family = poisson, 
+    data = train2)
+
+
+
+#summary(pois1)  # INTERPRET RESULTS
+display_df = data.frame(summary(pois1)$coefficients)
+names(display_df) = c("Coefficient","Std_Error","Z_Score","P_value")
+```
+
+
+### Figure 7: Regular Poisson Model coefficients with stepwise selection
+```{r, echo=F}
+  kable(display_df)
+```
+
+The interpretation of the above model is given below:  
+
+* For one unit increase in VolatileAcidity, the average TARGET variable decreases by approximately 3%.
+
+* For one unit increase in Chlorides, the average TARGET variable decreases by approximately 3.7%.
+
+* FreeSulfurDioxide and TotalSulfurDioxide have negligible impact on the TARGET variable, since their coefficinents are almost 0.
+
+* A one unit increase in Density variable, will make the average TARGET variable decrease by 27.8%. Although the Density variable's p-value is not significant (assuming the significance level as 5%), we still consider the Density variable as significant, since this variable is chosen by the variable selection method (which is insensitive to the Type-1 errors).
+
+* A one unit increase in pH value will decrease the average value of TARGET by 1%. Same is applicable to Sulphates also.
+
+* A one unit increase in Alcohol variable will increase the TARGET variable's average value by just 0.2%
+
+* The LabelAppeal and STARS have a positive impact on the average TARGET value. A one unit increase in LabelAppeal will increase the TARGET variable by 15.9%, and a one unit increase in STARS will increase the average TARGET value by 18.8%.
+
+* The dummy variable STARS_dummyNA has a negative impact on the average TARGET value. Whenever the STARS variable has unavailable information, the average TARGET value will decrease by 102%, and this means, the TARGET value will become zero, with one unit increase in STARS_dummyNA variable. But the STARS_dummyNA will only take 0 or 1 values, and hence there is no possibility for this variable to increase more than 1 unit from 0 value. This is an example, where extrapolation of the model on out of range data will give unpredictable results.
+
+
+_Poisson-Model-2_:
+
+Our second model will be a "Hurdle" or two part model which is actually composed of two models. The first model will use binomial logistic regression to predict if the TARGET variable is zero. Given that our first model predicts the TARGET variable as non-zero, we will then use Poisson regression to predict the TARGET value, which will be greater than zero. This approach will help us eliminate the effect of the bloated zero values in the TARGET variable. For the classification, we will use logistic regression. If the logistic regression model does not give better results (based on accuracy), we will consider other classification models. For both the models (logistic and poisson) we will use _stepAIC()_ to determine the significant variables. 
+
+The binary logistic regression model and count data model on the subsetted training data are given below (these models are obtained after eliminating insignificant variables using _stepAIC()_ method):
+
+NOTE: For logistic regression purposes, let TARGET_CLASS be a variable that identifies if the TARGET variable's value is greater than 0. If TARGET > 0, then TARGET_CLASS will be 1, else TARGET_CLASS will be zero. With this assumption, a logistic model is fit to determine the TARGET_CLASS value.
+
+```{r, echo=F}
+## TWO PART ZERO INFLATED MODELS
+# BINARY Fit on Target Class
+binary_all <- glm(TARGET_CLASS~FixedAcidity + VolatileAcidity +CitricAcid + 
+                        ResidualSugar+Chlorides +FreeSulfurDioxide +TotalSulfurDioxide  +
+                        Density+pH+Sulphates+Alcohol+LabelAppeal+AcidIndex+ STARS * STARS_dummyNA,
+                    family="binomial",data=train2)
+# stup AIC on model
+#stepAIC(binary_all)
+
+binary1 = glm(formula = TARGET_CLASS ~ VolatileAcidity + Chlorides + FreeSulfurDioxide + 
+    TotalSulfurDioxide + pH + Sulphates + Alcohol + LabelAppeal + 
+    AcidIndex + STARS + STARS_dummyNA, family = "binomial", data = train2)
+
+display_df = data.frame(summary(binary1)$coefficients)
+names(display_df) = c("Coefficient","Std_Error","Z_Score","P_value")
+```
+
+### Figure 8: Binomial Logistic Regression on TARGET CLASS
+```{r, echo=F}
+  kable(display_df)
+```
+
+
+As per the above model, as the STARS value increases, so does the probability that TARGET value is more than 0, since STARS has a large positive coefficient (2.56), when compared to other variables coefficients. As the STARS_dummyNA value increases, so does the probability that the TARGET variable will be 0, since STARS_dummyNA has a big negative coefficient (-4.38) when compared to other variables coefficients. For all other variables if the coefficient is positive then the probability of TARGET>0 increases, and if the coefficient is negative, then the probability that TARGET = 0 increases.
+
+```{r, echo=F}
+
+## TWO PART ZERO INFLATED MODELS
+# POISSON using stepAIC
+zero_pois_all = glm(TARGET~FixedAcidity + VolatileAcidity +CitricAcid + 
+                        ResidualSugar+Chlorides +FreeSulfurDioxide +TotalSulfurDioxide  +
+                        Density+pH+Sulphates+Alcohol+LabelAppeal+AcidIndex+ STARS * STARS_dummyNA,
+                    family=poisson,data=train_rest)
+#stepAIC(zero_pois_all)
+
+zero_pois1 = glm(formula = TARGET ~ VolatileAcidity + Alcohol + LabelAppeal + 
+    AcidIndex + STARS + STARS_dummyNA, family = poisson, data = train_rest)
+
+# display code
+display_df = data.frame(summary(zero_pois1)$coefficients)
+names(display_df) = c("Coefficient","Std_Error","Z_Score","P_value")
+```
+
+### Figure 9: Poisson using a subset of training data (TARGET >= 1)
+```{r, echo=F}
+  kable(display_df)
+```
+
+The poisson regression model using only subset data (TARGET>0) is displayed in Figure 9. These results are applicable to scenarios where the TARGET variable is predicted to be greater than 0.  The model coefficients can be interpreted as given below:
+
+* For one unit increase in VolatileAcidity, the TARGET value decreases by 0.9%, which is not significant.
+
+* For one unit increase in Alcohol, the TARGET value increases by 0.64%, which is not significant.
+
+* For one unit increase in LabelAppeal, the TARGET value increases by 21.8%, which is significant.
+
+* For one unit increase in AcidIndex, the TARGET value decreases by 1.5%, which is not significant.
+
+* For one unit increase in STARS, the TARGET value increases by 9%, which is significant.
+
+* For one unit increase in STARS_dummyNA, the TARGET value decreases by 14.42%, which is significant.
+
+
+_Poisson-Model-3_:
+
+In _Poisson-Model-2_ we used a two part method to determine if the TARGET value is greater than 0, and then applied another model (poisson regression), given that the TARGET value is estimated to be greater than 0. In that approach, we assumed that the 0 value of the TARGET variable is generated by a separate single process, and the TARGET variable of greater than 1 is generated by another separate process. These two processes are assumed to be mutually exclusive. That is, the second process will never generate 0 value for TARGET, and the first process will never generate non-zero value for TARGET. 
+
+However, there might be a loss in prediction performance if zeros are generated by both the processes. So zero inflated models consider that there is a chance that the second process can generate a value of TARGET equal to 0. We name the zero inflated model produced using logistic regression and poisson regresion as _Poisson-Model-3_. We will use _zeroinfl()_ function to produce a two component zero inflated poisson model via maximum likelihood. Since stepAIC does not work specifically for the output of this function, we will use the variables of logistic regression and poisson regression obtained in _Poisson-Model-2_.
+
+The third zero-inflated poisson model coefficients are given below:
+
+```{r, echo=F, warning=F}
+zero_pois2 = zeroinfl( TARGET ~ VolatileAcidity + Alcohol + LabelAppeal + 
+    AcidIndex + STARS + STARS_dummyNA |
+   VolatileAcidity + Chlorides + FreeSulfurDioxide + 
+    TotalSulfurDioxide + pH + Sulphates + Alcohol + LabelAppeal + 
+    AcidIndex + STARS + STARS_dummyNA
+        ,data=train2, link="logit", dist="poisson")
+
+
+display_df = data.frame(summary(zero_pois2)$coefficients$zero)
+names(display_df) = c("Coefficient","Std_Error","Z_Score","P_value")
+```
+
+### Figure 10: Coefficients for logit results from zeroinfl()
+```{r, echo=F}
+kable(display_df)
+```
+
+The _zeroinfl()_ function of R, uses a logistic model based on calculating the TARGET = 0. In _Poison-model-2_, the logistic regression was developed based on the probability of TARGET>0. Hence the coefficients signs of logistic models in _Poisson-model-2_ and _Poisson-model-3_ are flipped. For instance the STARS variable has a positive coefficient in the logistic model of _Poisson-model-2_, while the STARS variable in _Poisson-model-3_ has a negative sign. 
+
+Let us now interpret the logistic model of _Poisson-model-3_. 
+
+* The STARS_dummyNA variable has a big positive coefficient. Hence as this variable increases the probability of TARGET = 0 increases significantly. For STARS variable we have a big negative coefficient. This will make the probability of TARGET=0 decrease significantly as STARS variable increases. On the similar lines if any variable has a positive coefficient, the probability of TARGET = 0 will increase, with the increase in the variable value. If the variable has negative coefficient, then an increase in the variable value will decrease the probability of TARGET=0.
+
+### Figure 11: Coefficents for Count model from zeroinfl()
+```{r, echo=F}
+display_df = data.frame(summary(zero_pois2)$coefficients$count)
+names(display_df) = c("Coefficient","Std_Error","Z_Score","P_value")
+kable(display_df)
+
+```
+
+Figure 11 shows the poisson regression of _Poisson-model-3_. This model interpretation is given below:
+
+* For one unit increase in LabelAppeal, the average TARGET value will increase by 23.2% approximately. The STARS variable also has same positive impact, but it will increase the TARGET value by 10.5%. The Alcohol variable has positive impact, but a unit increase in Alcohol will only increase the TARGET variable by 0.7% approximately.
+
+* All other variables in the model have negative impact on the TARGET variable. One unit increase in STARS_dummyNA variable will make TARGET variable decrease by 18.3% approximately. A one unit increase in VolatileAcidity will reduce the TARGET value by 1.2%, and one unit increase in AcidIndex will make the TARGET variable decrease by 1.96%
+
+NOTE: The above variables interpretation is applicable to scenarios where the TARGET variable is predicted to be more than 0. 
+
+We will now check the pure poisson models for over-dispersion using _dispersiontest()_ from the AER package. This will help us gauge the validity of any negative binomial models.
+
+```{r,echo=F,warning=F}
+dispersiontest(pois1)
+dispersiontest(zero_pois1)
+
+```
+
+P-values of 1 for both tests show that over-dispersion is not present in the poisson models. We can therefore conclude that Negative binomial models might not be appropriate, since there is no over dispersion in the poisson models. However we will develop negative binomial models to determine if these models improve the prediction accuracy any further.
+
+### Negative Binomial Models
+
+We will build and interpret our negative binomial models in a manner similar to the poisson models using the _glm.nb()_ function from the MASS package. First the stepAIC function will perform forward and backward selection to produce a regular negative binomial model that does not account for zeros. 
+
+_Negative-binomial-model-1_
+
+The coefficients for our first negative binomial model are shown below. This model does not consider the zero inflation, and treats zeros in the TARGET variable as a normal value:
+
+```{r, echo=F, warning=F}
+# initial model... all variablesSTARS_dummyNA as associated with STARS
+nb_all = glm.nb(TARGET~FixedAcidity + VolatileAcidity + CitricAcid +ResidualSugar+
+    Chlorides + FreeSulfurDioxide + TotalSulfurDioxide +Density+pH+Sulphates+Alcohol+LabelAppeal +
+    AcidIndex +  STARS * STARS_dummyNA,data=train2)
+
+nb_all = glm.nb(TARGET~FixedAcidity + VolatileAcidity + CitricAcid +ResidualSugar+
+    Chlorides + FreeSulfurDioxide + TotalSulfurDioxide +Density+pH+Sulphates+Alcohol+LabelAppeal +
+    AcidIndex +  STARS * STARS_dummyNA,data=train2)
+
+#stepAIC(nb_all)
+
+# results of stepAIC() 
+nb1 = glm.nb(formula = TARGET ~ FixedAcidity + VolatileAcidity + CitricAcid + 
+    ResidualSugar + Chlorides + FreeSulfurDioxide + TotalSulfurDioxide + 
+    Density + pH + Sulphates + Alcohol + LabelAppeal + AcidIndex + 
+    STARS + STARS_dummyNA, data = train2, init.theta = 40606.39252, 
+    link = log)
+
+display_df = data.frame(summary(nb1)$coefficients)
+names(display_df) = c("Coefficient","Std_Error","Z_Score","P_value")
+```
+
+
+## Figure 12: Results of regular negative binomial regression using stepAIC
+```{r, echo=F}
+kable(display_df)
+```
+
+Let us interpret the above model in figure-12:
+
+* The variables FixedAcidity, CitricAcid, ResidualSugar, FreeSulfurDioxide, TotalSulfurDioxide, Alcohol, LabelAppeal, and STARS have positive coefficients. But except the STARS and LabelAppeal, all other listed variable do not have a significant positive coefficients. A unit increase in STARS will increase the TARGET value by 18.8%, and a one unit increase in LabelAppeal will increase the TARGET variable by approximately 16%. Other variables FixedAcidity, CitricAcid, ResidualSugar, FreeSulfurDioxide, TotalSulfurDioxide, and Alcohol have positive effect on TARGET variable, although the effect is less than 1% increase in TARGET variable.
+
+* The variables VolatileAcidity, Chlorides, Density, pH, Sulphates, AcidIndex and STARS_dummyNA have negative coefficients. But except the Density and STARS_dummyNA variables, all other listed variable do not have a significant negative coefficients. A unit increase in Density will decrease the TARGET value by 27.6%, and a one unit decrease in STARS_dummyNA will decrease the TARGET variable by approximately 10%. Other variables VolatileAcidity, Chlorides, pH, Sulphates, and AcidIndex have negative effect on TARGET variable, although the effect is less than 1% decrease in TARGET variable.
+
+The results of this model are the same as the one we obtained using poisson regression (_Poisson-model-1_), and this confirms that there is no overdispersion in the data.
+
+_Negative-binomial-model-2_
+
+Our second model will be a Hurdle or two part model. The first part of the model will predict if the TARGET variable is equal to zero. Given that the first part predicts the TARGET >0, the second part predicts the TARGET value using Negative binomial model. We will not develop a separate logistic model (part 1), since that model was already developed while developing the _Poisson-model-2_. The second part of the model uses negative binomial distribution trained on the data for which the TARGET > 0. The model is further refined using _stepAIC()_ to eliminate insignificant variables.
+
+The coefficients of our second negative binomial model using a subset of the training set (TARGET>0) is given below:
+
+```{r, echo=F, warning=F}
+nbzero_all = glm.nb(TARGET ~FixedAcidity + VolatileAcidity + CitricAcid +ResidualSugar+
+    Chlorides + FreeSulfurDioxide + TotalSulfurDioxide + Density+pH+Sulphates+Alcohol+LabelAppeal +
+    AcidIndex +  STARS * STARS_dummyNA, data=train_rest)
+
+
+#Sekhar: I obtained the following model:
+zero_nb1 = glm.nb(formula = TARGET ~ VolatileAcidity + Alcohol + LabelAppeal + 
+    AcidIndex + STARS + STARS_dummyNA, data = train_rest, init.theta = 347549.2109, 
+    link = log)
+
+display_df = data.frame(summary(zero_nb1)$coefficients)
+names(display_df) = c("Coefficient","Std_Error","Z_Score","P_value")
+```
+
+## Figure 13: Negative binomial using a subset of training data (TARGET >= 1)
+```{r, echo=F}
+kable(display_df)
+```
+
+We eliminated the TARGET=0 records from the training data and fit a negative binomial model. The _stepAIC()_ function has eliminated all the unnecessary variables and only 6 variables are included in the final negative binomial model. The coefficients of this model (given in Figure 13) are interpreted below:
+
+* A one unit increase in LabelAppeal will increase the TARGET variable value by 22%.
+
+* A one unit increase in STARS will increase the TARGET value by 9.2%
+
+* A one unit increase in Alcohol will increase the TARGET value by 0.6% 
+
+* A one unit increase in VolatileAcidity will decrease the TARGET value by 1%
+
+* A one unit increase in AcidIndex will decrease the TARGET variable by 1.5%
+
+* A one unit increase in STARS_dummyNA will decrease the TARGET value by 14.4%
+
+Again, this model's coefficients are the same as the model obtained in _Poisson-model-2_ (developed as a 2 part model with logistic regression to predict TARGET > 0 and poisson regression model to predict TARGET, given that TARGET is predicted as more than 0. See Figure-9 for _Poisson-model-2_). Since the poisson and negative binomial models resulted the same models, we can conclude that there is no overdispersion in the data.
+
+_Negative-binomial-model-3_
+
+Now we will develop a zero inflated model using negative binomial distribution and logistic regression. The main difference between this model (_Negative-binomial-model-3_) and the previous model(_Negative-binomial-model-2_) is related to which process generates the TARGET=0 values. In the hurdle model (_Negative-binomial-model-2_), the TARGET=0 values are generated by a single process, and another process generates TARGET > 0 values. These two processes are assumed to generate non-overlapping values. But in zeroinflated models, the TARGET=0 values are generated by both the processes, although the first process still generates TARGET=0 values only. We will use _zeroinfl()_ function of R to fit a logistic regression model (to predict if TARGET=0), and negative binomial model to predict the TARGET value, given that the logistic regression model predicts that the TARGET value is generated by the second process. 
+
+The results from _Negative-binomial-model-2_ model will be used as predictors for the two components (logistic regression and negative binomial regression model).
+
+The coefficients of our third negative binomial model are shown below:
+
+```{r, echo=F, warning=F}
+
+zero_nb2 = zeroinfl( TARGET ~ VolatileAcidity + Alcohol + LabelAppeal + 
+    AcidIndex + STARS + STARS_dummyNA |
+       VolatileAcidity + Chlorides + FreeSulfurDioxide + 
+    TotalSulfurDioxide + pH + Sulphates + Alcohol + LabelAppeal + 
+    AcidIndex + STARS + STARS_dummyNA
+,data=train2, link="logit", dist="negbin")
+
+   
+display_df = data.frame(summary(zero_nb2)$coefficients$zero)
+names(display_df) = c("Coefficient","Std_Error","Z_Score","P_value")
+
+```
+
+### Figure 14: Coefficients for logit model from zeroinfl() negative binomial
+```{r, echo=F}
+kable(display_df)
+```
+
+The logistic regression model produced (above in figure 14) by the zero inflation method is same as the logistic model produced by _Poisson-model-3_. See the logistic model in _Poisson-model-3_ (Figure-10) for interpretation of the above logistic model.
+
+### Figure 15: Coefficients for count model from zeroinfl() negative binomial
+```{r, echo=F}
+display_df = data.frame(summary(zero_nb2)$coefficients$count)
+
+kable(display_df[-nrow(display_df),])
+```
+
+The model displayed above is the same regression model (based on zero inflation poisson regression) obtained in _Poisson-model-3_ model (Figure-11). 
+
+We can see that the poisson models and negative binomial models are the same. This is due to the fact that there is no over disperssion for the poisson models. From now onwards we will drop the negative binomial models and consider only the poisson models _Poisson-model-1, _Poisson-model-2_ and _Poisson-model-3_.
+
+## Multivariate Linear Regression
+
+Now we will fit multi variate regression models, one linear regression and one polynomial regression with optimal degree, selected using a cross-validation method.
+
+_Linear-model-1_
+
+Our first linear regression model will be built again using forward and backward stepwise selection using stepAIC.
+
+The coefficients of the first MLR (Multivariate Linear Regression) model are shown below:
+
+```{r, echo=F}
+lm_all = lm(TARGET~FixedAcidity + VolatileAcidity + CitricAcid +ResidualSugar+
+    Chlorides + FreeSulfurDioxide + TotalSulfurDioxide +Density+pH+Sulphates+Alcohol+LabelAppeal +
+    AcidIndex +  STARS * STARS_dummyNA, data=train2)
+
+#stepAIC(lm_all)
+
+glm_fit1 = glm(formula = TARGET ~ VolatileAcidity + Chlorides + FreeSulfurDioxide + 
+    TotalSulfurDioxide + Density + pH + Alcohol + LabelAppeal + 
+    AcidIndex + STARS + STARS_dummyNA, data = train2)
+
+display_df = data.frame(summary(glm_fit1)$coefficients)
+names(display_df) = c("Coefficient","Std_Error","Z_Score","P_value")
+
+```
+
+## Figure 16: Coefficients for MLR using stepwise selection
+```{r,echo=F}
+kable(display_df)
+
+```
+
+The above model (figure 16) is obtained by fitting a linear model using all the variables of the training data, and eliminating the insignificant variables using _stepAIC()_ function. The model interpretation is given below:
+
+* For a unit increase in VolatileAcidity value, the TARGET variable is reduced by approximately 0.096
+
+* For a unit increase in Chlorides value, the TARGET variable is reduced by approximately 0.12
+
+* For a unit increase in Density value, the TARGET variable is reduced by approximately 0.8
+
+* For a unit increase in pH value, the TARGET variable is reduced by approximately 0.035
+
+* For a unit increase in AcidIndex value, the TARGET variable is reduced by approximately 0.2
+
+* For a unit increase in STARS_dummyNA value, the TARGET variable is reduced by approximately 2.25 (A significant decrease)
+
+* For a unit increase in FreeSulfurDioxide value, the TARGET variable is increased by approximately 0.00028  
+
+* For a unit increase in TotalSulfurDioxide value, the TARGET variable is increased by approximately 0.00022
+
+* For a unit increase in Alcohol value, the TARGET variable is increased by approximately 0.01
+
+* For a unit increase in LabelAppeal value, the TARGET variable is increased by approximately 0.47
+
+* For a unit increase in STARS value, the TARGET variable is increased by approximately 0.7
+
+The p-value associated with the F-Statistic of _Linear-model-1_ is almost 0, which shows that there is an association between the TARGET and the independent variables in the _Linear-model-1_. 
+
+
+_Linear-model-2_
+
+Now we will fit a polynomial regression model to the training data. But we will pick the optimal degree of polynomial using the cross validation technique. Also the polynomial model is fit only on the variables used in the _Linear-model-1_. We used polynomial regression from degree 1 to degree 3, and obtained the cross validation results (plotted in Figure-17). The figure shows that there is no significant decrease in the CV error (see the y-axis values. We are seeing only a slight decrease in the error). 
+
+### Figure 17: Finding the optimal polynomial degree based on the Cross Validation technique
+```{r echo=FALSE}
+err <- vector()
+
+for(i in 1:3)
+  {
+glm_fit2 <- glm(formula = TARGET ~ poly(VolatileAcidity,i) + poly(Chlorides,i) + poly(FreeSulfurDioxide,i) + 
+    poly(TotalSulfurDioxide,i) + poly(Density,i) + poly(pH,i) + poly(Alcohol,i) + poly(LabelAppeal,i) + 
+    poly(AcidIndex,i) + poly(STARS,i) + STARS_dummyNA, data = train2)
+
+err[i] <- cv.glm(train2,glm_fit2,K=5)$delta[1]
+}
+
+plot(err, xlab="Degree of polynomial",ylab="Cross Validation error")
+```
+
+Since there is no significant error drop with the higher degree of polynomial. Therefore we will discard _Linear-model-2_ from further consideration. Although we may only select a count model for this assignment, _Linear-model-1_ will be analyzed regardless in the model selection process. 
+
+## Model Selection
+
+We have 12795 observations in the training data set. We will randomly select 1000 observations from this data set, and keep them aside as the test data set to evaluate the performance of our models. The remaining 11795 observations will be used to develop _Poisson-model-1_ (Plain poisson model), _Poisson-model-2_ (Hurdle or two part model), _Poisson-model-3_ (Zero inflated poisson model) and _Linear-model-1_ (Linear regression model), and their performance is evaluated on the held data. This is repeated 10 times, and the average error is calculated. The method that has the least error will be finally proposed. 
+
+
+```{r echo=FALSE}
+Pois_1_err <- vector()
+Pois_2_err <- vector()
+Pois_3_err <- vector()
+lin_1_err <- vector()
+for(i in 1:10)
+  {
+obs = sample(1000)
+
+test_temp = train2[obs,]
+
+#Developing _poisson-model-1_
+pois1 = glm(formula = TARGET ~ VolatileAcidity + Chlorides + FreeSulfurDioxide + 
+    TotalSulfurDioxide + Density + pH + Sulphates + Alcohol + 
+    LabelAppeal + AcidIndex + STARS + STARS_dummyNA, family = poisson, 
+    data = train2[-obs,])
+
+pred = round(predict(pois1,newdata=test_temp,type="response"))
+
+Pois_1_err[i] <- sqrt(mean((test_temp$TARGET - pred)^2))
+
+x = train2[-obs,]
+binary1 = glm(formula = TARGET_CLASS ~ VolatileAcidity + Chlorides + FreeSulfurDioxide + 
+    TotalSulfurDioxide + pH + Sulphates + Alcohol + LabelAppeal + 
+    AcidIndex + STARS + STARS_dummyNA, family = "binomial", data = train2[-obs,])
+
+zero_pois1 = glm(formula = TARGET ~ VolatileAcidity + Alcohol + LabelAppeal + 
+    AcidIndex + STARS + STARS_dummyNA, family = poisson, data = train2[-obs,][x$TARGET > 0,])
+
+
+prob = predict(binary1,newdata=test_temp,type="response")
+class = ifelse(prob>=0.5,1,0)
+
+pred = round(class * predict(zero_pois1,newdata=test_temp,type="response"))
+
+Pois_2_err[i] <- sqrt(mean((test_temp$TARGET - pred)^2))
+
+
+
+
+zero_pois2 = zeroinfl( TARGET ~ VolatileAcidity + Alcohol + LabelAppeal + 
+    AcidIndex + STARS + STARS_dummyNA |
+   VolatileAcidity + Chlorides + FreeSulfurDioxide + 
+    TotalSulfurDioxide + pH + Sulphates + Alcohol + LabelAppeal + 
+    AcidIndex + STARS + STARS_dummyNA
+        ,data=train2[-obs,], link="logit", dist="poisson")
+
+pred = predict(zero_pois2,newdata=test_temp,type="response")
+
+Pois_3_err[i] <- sqrt(mean((test_temp$TARGET - pred)^2))
+
+
+glm_fit1 = glm(formula = TARGET ~ VolatileAcidity + Chlorides + FreeSulfurDioxide + 
+    TotalSulfurDioxide + Density + pH + Alcohol + LabelAppeal + 
+    AcidIndex + STARS + STARS_dummyNA, data = train2[-obs,])
+
+pred = round(predict(glm_fit1,newdata=test_temp,type="response"))
+
+lin_1_err[i] <- sqrt(mean((test_temp$TARGET - pred)^2))
+
+}
+
+display_df <- data.frame(c("Plain Poisson", "Hurdle Poisson", "Zero infl Poisson", "Linear model"), Error = c(mean(Pois_1_err),mean(Pois_2_err),
+                                                                                                              mean(Pois_3_err),
+                                                                                                              mean(lin_1_err) ))
+colnames(display_df) = c("Models", "Error")
+kable(display_df)
+```
+
+
+Since the zero-inflated poisson model has the least error, we propose the zero inflated poisson model as the final model. We will use this model to make predictions. The code for predictions can be found in the **Code Appendix** and results are saved to _wine-evaluation-predictions.csv_
+
+```{r echo=FALSE}
+zero_pois2 = zeroinfl( TARGET ~ VolatileAcidity + Alcohol + LabelAppeal + 
+    AcidIndex + STARS + STARS_dummyNA |
+   VolatileAcidity + Chlorides + FreeSulfurDioxide + 
+    TotalSulfurDioxide + pH + Sulphates + Alcohol + LabelAppeal + 
+    AcidIndex + STARS + STARS_dummyNA
+        ,data=train2, link="logit", dist="poisson")
+
+```
+
+\newpage
+
+## Appendix A: Density Plots  
+
+Density plots showing distributions of variables in the dataset
+
+```{r, echo=F, warning=F}
+make_density_plots()
+```
+
+\newpage
+## Code Appendix
+
+### Prediction Code
+
+```{r, eval=F}
+test = read.csv("wine-evaluation-data.csv")
+test = test[,-1]
+test$STARS_dummyNA = ifelse(is.na(test$STARS),1,0) 
+test$STARS[is.na(test$STARS)] = median(test$STARS, na.rm = T)
+
+# Code to impute data -- DO NOT EVALUATE IN RMD
+imputed_test = mice(test, m=1,maxit=10,meth='pmm',seed=500)
+densityplot(imputed_test) # imputations look good... 
+test2 = complete(imputed_test,1)
+
+test_0 <- test2[test2$TARGET==0,]
+test_rest <- test2[test2$TARGET!=0,]
+
+test2$TARGET_CLASS <- ifelse(test2$TARGET==0, 0, 1)
+
+# predict and append column to modified test dataframe... export to csv
+test2$TARGET_predict = predict(zero_pois2,test2,type='response')
+write.csv(test2,'wine-evaluation-predictions.csv')
+
+
+```
+
+
+
+### Analysis Code
+```{r, eval=F}
+library(ggplot2)
+library(reshape2)
+library(MASS)
+library(pscl)
+library(AER)
+library(mice)
+library(lattice)
+library(knitr)
+library(boot)
+
+## utility functions
+
+check_NA = function(df){
+    apply(df,2,function(x){ sum(is.na(x))/length(x) })    
+}
+
+make_cor_heatmap = function(mydata){
+    # based on open source code found here:
+    #http://www.sthda.com/english/wiki/
+    #ggplot2-quick-correlation-matrix-heatmap-r-software-and-data-visualization
+    
+    cormat = round(cor(mydata),2)
+    
+    get_upper_tri = function(cormat){
+        cormat[lower.tri(cormat)]<- NA
+        return(cormat)
+    }
+    
+    melted_cormat = melt(get_upper_tri(cormat), na.rm =T) # melt matrix
+    
+    # return ggplot object
+    ggplot(data = melted_cormat, aes(Var2, Var1, fill = value))+
+        geom_tile(color = "white")+
+        scale_fill_gradient2(low = "blue", high = "red", mid = "white", 
+                             midpoint = 0, limit = c(-1,1), space = "Lab", 
+                             name="Pearson\nCorrelation") +
+        theme_minimal()+ 
+        theme(axis.text.x = element_text(angle = 45, vjust = 1, 
+                                         size = 12, hjust = 1))+
+        coord_fixed()
+}
+
+make_density_plots = function(df){
+    
+    apply(df,2,function(col){
+        densityplot(col,xlab=colnames(col))
+    })
+}
+
+
+# LOAD IN .. 
+setwd("~/Documents/CUNY/Data_Mining_621/Homework5")
+train = read.csv("wine-training-data.csv")
+train = train[,-1]  # drop INDEX column
+test = read.csv("wine-evaluation-data.csv")
+
+#DATA EXPLORATION CODE 
+# make a display df for the project
+variable_names = colnames(train)
+display_df = data.frame(variable_names)
+kable(display_df)
+
+# summarize predictors and check NA
+summary(train[,-1])
+check_NA(train)
+
+# summarize TARGET 
+summary(train[1]) 
+make_density_plots(train[1])
+
+# check correlations
+make_cor_heatmap(train) 
+
+# DATA PREP CODE
+
+# make STARS NA dummy var
+train$STARS_dummyNA = ifelse(is.na(train$STARS),1,0) 
+train$STARS[is.na(train$STARS)] = median(train$STARS, na.rm = T)
+
+# Code to impute data -- DO NOT EVALUATE IN RMD
+imputed_train = mice(train, m=1,maxit=10,meth='pmm',seed=500)
+densityplot(imputed_train) # imputations look good... 
+train2 = complete(imputed_train,1)
+#save(train2,file = 'train2.rds')      <- save load time on knit
+
+#setwd("~/Documents/CUNY/Data_Mining_621/Homework5")  <- this needed here or knit breaks
+#load('train2.rds')
+
+# Split into two datasets for zero inflated subset model and set target class in main dataset
+train_0 <- train2[train2$TARGET==0,]
+train_rest <- train2[train2$TARGET!=0,]
+
+train2$TARGET_CLASS <- ifelse(train2$TARGET==0, 0, 1)
+
+make_cor_heatmap(train2)  # final eval with heatmap
+
+# MODEL building
+
+# Poisson 1
+pois_all = glm(TARGET~FixedAcidity + VolatileAcidity + CitricAcid +ResidualSugar+
+    Chlorides + FreeSulfurDioxide + TotalSulfurDioxide + 
+    Density+pH+Sulphates+Alcohol+LabelAppeal +
+    AcidIndex +  STARS * STARS_dummyNA , family=poisson,data=train2)
+
+#stepAIC(pois_all)
+
+# results of stepAIC() 
+pois1 = glm(formula = TARGET ~ VolatileAcidity + Chlorides + FreeSulfurDioxide + 
+    TotalSulfurDioxide + Density + pH + Sulphates + Alcohol + 
+    LabelAppeal + AcidIndex + STARS + STARS_dummyNA, family = poisson, 
+    data = train2)
+
+
+
+summary(pois1)  # INTERPRET RESULTS
+
+## TWO PART ZERO INFLATED MODELS
+# BINARY Fit on Target Class
+binary_all <- glm(TARGET_CLASS~FixedAcidity + VolatileAcidity +CitricAcid + 
+                        ResidualSugar+Chlorides +FreeSulfurDioxide +TotalSulfurDioxide  +
+                        Density+pH+Sulphates+Alcohol+LabelAppeal+AcidIndex+ STARS * STARS_dummyNA,
+                    family="binomial",data=train2)
+# stup AIC on model
+#stepAIC(binary_all)
+
+binary1 = glm(formula = TARGET_CLASS ~ VolatileAcidity + Chlorides + FreeSulfurDioxide + 
+    TotalSulfurDioxide + pH + Sulphates + Alcohol + LabelAppeal + 
+    AcidIndex + STARS + STARS_dummyNA, family = "binomial", data = train2)
+
+summary(binary1)
+
+## TWO PART ZERO INFLATED MODELS
+# POISSON using stepAIC
+zero_pois_all = glm(TARGET~FixedAcidity + VolatileAcidity +CitricAcid + 
+                        ResidualSugar+Chlorides +FreeSulfurDioxide +TotalSulfurDioxide  +
+                        Density+pH+Sulphates+Alcohol+LabelAppeal+AcidIndex+ STARS * STARS_dummyNA,
+                    family=poisson,data=train_rest)
+#stepAIC(zero_pois_all)
+
+zero_pois1 = glm(formula = TARGET ~ VolatileAcidity + Alcohol + LabelAppeal + 
+    AcidIndex + STARS + STARS_dummyNA, family = poisson, data = train_rest)
+
+summary(zero_pois1)
+
+
+# USING zeroinfl function
+zero_pois2 = zeroinfl( TARGET ~ VolatileAcidity + Alcohol + LabelAppeal + 
+    AcidIndex + STARS + STARS_dummyNA |
+   VolatileAcidity + Chlorides + FreeSulfurDioxide + 
+    TotalSulfurDioxide + pH + Sulphates + Alcohol + LabelAppeal + 
+    AcidIndex + STARS + STARS_dummyNA
+        ,data=train2, link="logit", dist="poisson")
+
+
+display_df = data.frame(summary(zero_pois2)$coefficients$zero)
+names(display_df) = c("Coefficient","Std_Error","Z_Score","P_value")
+
+summary(zero_pois1)
+
+### Negative Binomial Models
+
+# initial model... all variablesSTARS_dummyNA as associated with STARS
+nb_all = glm.nb(TARGET~FixedAcidity + VolatileAcidity + CitricAcid +ResidualSugar+
+    Chlorides + FreeSulfurDioxide + TotalSulfurDioxide +Density+pH+Sulphates+Alcohol+LabelAppeal +
+    AcidIndex +  STARS * STARS_dummyNA,data=train2)
+
+#stepAIC(nb_all)
+
+# results of stepAIC() 
+nb1 = glm.nb(formula = TARGET ~ FixedAcidity + VolatileAcidity + CitricAcid + 
+    ResidualSugar + Chlorides + FreeSulfurDioxide + TotalSulfurDioxide + 
+    Density + pH + Sulphates + Alcohol + LabelAppeal + AcidIndex + 
+    STARS + STARS_dummyNA, data = train2, init.theta = 40606.39252, 
+    link = log)
+
+summary(nb1)
+
+nbzero_all = glm.nb(TARGET ~FixedAcidity + VolatileAcidity + CitricAcid +ResidualSugar+
+    Chlorides + FreeSulfurDioxide + TotalSulfurDioxide + Density+pH+Sulphates+Alcohol+LabelAppeal +
+    AcidIndex +  STARS * STARS_dummyNA, data=train_rest)
+
+
+#Sekhar: I obtained the following model:
+zero_nb1 = glm.nb(formula = TARGET ~ VolatileAcidity + Alcohol + LabelAppeal + 
+    AcidIndex + STARS + STARS_dummyNA, data = train_rest, init.theta = 347549.2109, 
+    link = log)
+
+summary(zero_nb1)
+
+
+zero_nb2 = zeroinfl( TARGET ~ VolatileAcidity + Alcohol + LabelAppeal + 
+    AcidIndex + STARS + STARS_dummyNA |
+       VolatileAcidity + Chlorides + FreeSulfurDioxide + 
+    TotalSulfurDioxide + pH + Sulphates + Alcohol + LabelAppeal + 
+    AcidIndex + STARS + STARS_dummyNA
+,data=train2, link="logit", dist="negbin")
+
+   
+display_df = data.frame(summary(zero_nb2)$coefficients$zero)
+names(display_df) = c("Coefficient","Std_Error","Z_Score","P_value")
+kable(display_df)
+
+## Multivariate Linear Regression
+#model 1
+lm_all = lm(TARGET~FixedAcidity + VolatileAcidity + CitricAcid +ResidualSugar+
+    Chlorides + FreeSulfurDioxide + TotalSulfurDioxide +Density+pH+Sulphates+Alcohol+LabelAppeal +
+    AcidIndex +  STARS * STARS_dummyNA, data=train2)
+
+#stepAIC(lm_all)
+
+glm_fit1 = glm(formula = TARGET ~ VolatileAcidity + Chlorides + FreeSulfurDioxide + 
+    TotalSulfurDioxide + Density + pH + Alcohol + LabelAppeal + 
+    AcidIndex + STARS + STARS_dummyNA, data = train2)
+
+#model 2
+err <- vector()
+
+for(i in 1:3)
+  {
+glm_fit2 <- glm(formula = TARGET ~ poly(VolatileAcidity,i) + poly(Chlorides,i) + poly(FreeSulfurDioxide,i) + 
+    poly(TotalSulfurDioxide,i) + poly(Density,i) + poly(pH,i) + poly(Alcohol,i) + poly(LabelAppeal,i) + 
+    poly(AcidIndex,i) + poly(STARS,i) + STARS_dummyNA, data = train2)
+
+err[i] <- cv.glm(train2,glm_fit2,K=5)$delta[1]
+}
+
+plot(err)
+
+
+
+## Model Selection code
+Pois_1_err <- vector()
+Pois_2_err <- vector()
+Pois_3_err <- vector()
+lin_1_err <- vector()
+for(i in 1:10)
+  {
+obs = sample(1000)
+
+test_temp = train2[obs,]
+
+#Developing _poisson-model-1_
+pois1 = glm(formula = TARGET ~ VolatileAcidity + Chlorides + FreeSulfurDioxide + 
+    TotalSulfurDioxide + Density + pH + Sulphates + Alcohol + 
+    LabelAppeal + AcidIndex + STARS + STARS_dummyNA, family = poisson, 
+    data = train2[-obs,])
+
+pred = round(predict(pois1,newdata=test_temp,type="response"))
+
+Pois_1_err[i] <- sqrt(mean((test_temp$TARGET - pred)^2))
+
+x = train2[-obs,]
+binary1 = glm(formula = TARGET_CLASS ~ VolatileAcidity + Chlorides + FreeSulfurDioxide + 
+    TotalSulfurDioxide + pH + Sulphates + Alcohol + LabelAppeal + 
+    AcidIndex + STARS + STARS_dummyNA, family = "binomial", data = train2[-obs,])
+
+zero_pois1 = glm(formula = TARGET ~ VolatileAcidity + Alcohol + LabelAppeal + 
+    AcidIndex + STARS + STARS_dummyNA, family = poisson, data = train2[-obs,][x$TARGET > 0,])
+
+
+prob = predict(binary1,newdata=test_temp,type="response")
+class = ifelse(prob>=0.5,1,0)
+
+pred = round(class * predict(zero_pois1,newdata=test_temp,type="response"))
+
+Pois_2_err[i] <- sqrt(mean((test_temp$TARGET - pred)^2))
+
+
+
+
+zero_pois2 = zeroinfl( TARGET ~ VolatileAcidity + Alcohol + LabelAppeal + 
+    AcidIndex + STARS + STARS_dummyNA |
+   VolatileAcidity + Chlorides + FreeSulfurDioxide + 
+    TotalSulfurDioxide + pH + Sulphates + Alcohol + LabelAppeal + 
+    AcidIndex + STARS + STARS_dummyNA
+        ,data=train2[-obs,], link="logit", dist="poisson")
+
+pred = predict(zero_pois2,newdata=test_temp,type="response")
+
+Pois_3_err[i] <- sqrt(mean((test_temp$TARGET - pred)^2))
+
+
+glm_fit1 = glm(formula = TARGET ~ VolatileAcidity + Chlorides + FreeSulfurDioxide + 
+    TotalSulfurDioxide + Density + pH + Alcohol + LabelAppeal + 
+    AcidIndex + STARS + STARS_dummyNA, data = train2[-obs,])
+
+pred = round(predict(glm_fit1,newdata=test_temp,type="response"))
+
+lin_1_err[i] <- sqrt(mean((test_temp$TARGET - pred)^2))
+
+}
+
+display_df <- data.frame(c("Plain Poisson", 
+                           "Hurdle Poisson", "Zero infl Poisson", "Linear model"),
+        Error = c(mean(Pois_1_err),mean(Pois_2_err), mean(Pois_3_err),mean(lin_1_err)))
+                            
+
+
+#Generating the evaluation data predictions using Poisson-model-3
+
+df <- read.csv("wine-evaluation-data.csv")
+#names(df)
+
+df$TARGET = round(predict(zero_pois2,newdata=test_df,type="response"))
+
+#head(df)
+write.csv(df,file="evaluation_results.csv",row.names=FALSE)
+```
+
+
+
+

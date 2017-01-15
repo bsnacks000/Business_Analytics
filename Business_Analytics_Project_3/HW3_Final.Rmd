@@ -1,0 +1,684 @@
+---
+title: "Business Analytics Home Work 3"
+author: "John Deblase, Sekhar Mekala, Sonya Hong"
+date: "Saturday, October 15, 2016"
+output: pdf_document
+---
+
+##Project requirements
+The main goal of this project is to perform data analysis of the crime data related to a major city and predict if a neighborhood's crime rate is above the median crime rate of the city, based on a given set of inputs. We are given two data sets: the *training data set* and the *test data set*. The training data has input variables along with the observed response variable. We will use the training data set to train our model, and the predictions obtained on the test data will be submitted as a project deliverable. 
+
+##Data Exploration
+
+The "target" variable will be the dependent variable, and the remaining variables will be independent variables for our predictive models. The variables significance is given in Figure-1. 
+
+###Figure-1: Training data set's variables 
+
+![variables](C:\Users\Sekhar\Documents\R Programs\Business Analytics\HW3\fig1.png)
+
+The target variable can have two different values: 0 and 1. The crime rate above the city's median crime rate is represented as 1 and below city's median crime rate is represented as 0. 
+
+In the test data set, we have the the same set of variables (given in Figure-1), except the "target" variable. Our goal is to predict this variable's value in the test data as accurately as possible. We will use 5 fold cross validation technique to estimate our models accuracy using the training data.
+
+
+```{r include=FALSE,echo=FALSE,warning=FALSE}
+library(knitr)
+library(ggplot2)
+library(reshape2)
+library(gridExtra)
+library(boot)
+library(pander)
+library(gridExtra)
+library(MASS)
+library(caret)
+library(pROC)
+```
+
+```{r echo=FALSE, warning=FALSE}
+setwd("C:/Users/Sekhar/Documents/R Programs/Business Analytics/HW3")
+
+train_df <- read.csv("crime-training-data.csv") 
+test_df <- read.csv("crime-evaluation-data.csv") 
+#head(train_df)
+#head(test_df)
+```
+
+\newpage
+
+A summary of all the variables in the training data is given below:
+
+###Figure 2: Summary of training data set
+```{r echo=FALSE, warning=FALSE}
+summary(train_df)
+#summary(test_df)
+```
+
+From the summary information displayed above, we can conclude that we do not have any NA values (unavailable data) in the training data set. The "target" and "chas" variables were inputted as numeric, while they are categorical. We will transform the "target" variable as a categorical variable, and leave the "chas" variable as numeric, treating it as a dummy variable representing whether the suburb faces Charles River. 
+
+\newpage
+Below is a distribution of the target variable. 
+
+```{r echo=FALSE, warning=FALSE}
+train_df$target <- as.factor(train_df$target)
+
+ggplot(data=train_df,aes(target,fill=target))+
+  geom_bar(width=0.5)+
+  labs(title="Figure 3: Bar chart of the target variable")
+```
+
+The bar chart in Figure-3 shows the target variable as having almost equal distribution between "0" and "1", and the data is not imbalanced. This also suggests that we can safely use the probability threshold as 0.5 to determine if an observation is positive or negative.
+\newpage
+The following heat map shows the correlation between the variables of the test data set.
+
+```{r echo=FALSE,ffig.width = 8, fig.height = 6,warning=FALSE}
+
+#Code taken from #http://www.sthda.com/english/wiki/ggplot2-quick-correlation-matrix-heatmap-r-software-and-data-visualization
+
+setwd("C:/Users/Sekhar/Documents/R Programs/Business Analytics/HW3")
+library(reshape2)
+train_df <- read.csv("crime-training-data.csv") 
+
+
+cormat <- round(cor(train_df),2)
+
+##
+# Get lower triangle of the correlation matrix
+
+get_lower_tri<-function(cormat){
+  cormat[upper.tri(cormat)] <- NA
+  return(cormat)
+}
+# Get upper triangle of the correlation matrix
+get_upper_tri <- function(cormat){
+  cormat[lower.tri(cormat)]<- NA
+  return(cormat)
+}
+
+upper_tri <- get_upper_tri(cormat)
+#upper_tri
+
+
+reorder_cormat <- function(cormat){
+  # Use correlation between variables as distance
+  dd <- as.dist((1-cormat)/2)
+  hc <- hclust(dd)
+  cormat <-cormat[hc$order, hc$order]
+}
+
+# Reorder the correlation matrix
+cormat <- reorder_cormat(cormat)
+upper_tri <- get_upper_tri(cormat)
+# Melt the correlation matrix
+melted_cormat <- melt(upper_tri, na.rm = TRUE)
+
+# Create a ggheatmap
+ggheatmap <- ggplot(melted_cormat, aes(Var2, Var1, fill = value))+
+  geom_tile(color = "white")+
+  scale_fill_gradient2(low = "blue", high = "red", mid = "white", 
+                       midpoint = 0, limit = c(-1,1), space = "Lab", 
+                       name="Pearson\nCorrelation") +
+  theme_minimal()+ # minimal theme
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, 
+                                   size = 12, hjust = 1))+
+  coord_fixed()
+ggheatmap + 
+  geom_text(aes(Var2, Var1, label = value), color = "black", size = 2) +
+  theme(
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.border = element_blank(),
+    panel.background = element_blank(),
+    axis.ticks = element_blank(),
+    legend.justification = c(1, 0),
+    legend.position = c(0.6, 0.7),
+    legend.direction = "horizontal")+
+  guides(fill = guide_colorbar(barwidth = 7, barheight = 1,
+                               title.position = "top", title.hjust = 0.5))+
+  labs(title="Figure 4: Heat map showing correlations")
+
+train_df$target <- as.factor(train_df$target)
+
+```
+
+From Figure-4, we can identify that the target variable is strongly associated with the "nox" variable, the Nitrogen Oxide ($NO_2$) Concentration. The relationship between $NO_2$ concentration and crime rate seems peculiar until we see that "nox" is also strongly correlated to "indus", "dis", "age" variables also. So "nox" variable seems to be indirectly representing the relationship of "indus", "age" and "dis" variables with the "target" variable. Due to the correlation between "nox", "indus", "tax", "dis" and "age" variables we might consider using only one of these variables or combining all of them together to form a new variable in our models. 
+
+The target variable is negatively correlated with the "dis" variable, a measure related to the distance to 5 employment centers. The correlation of other predictor variables is not strong with the target variable. While building the models, we can identify and exclude the unnecessary variables in the variable selection process. This process would also elminate the correlated variables.
+
+\newpage
+
+##Data Preparation
+
+From Figure-2 we identified that none of the variables in the training data set have unavailable data, so no observations need to be eliminated. 
+
+The density plots of all the predictor variables are given in Figure-A.1 (in Appendix-A). From Figure-A.1, we can identify that three variables "indus", "rad" and "tax" have bimodal distributions. Ideally we would like these potential predictor variables to be normally distributed in order to improve our model's accuracy.  
+
+For convenience, we are showing the density plots "tax", "indus" and "rad" variables in Figure-5 given below. For all variable's density plots, please refer to Appendix-A, Figure-A.1. 
+
+
+```{r echo=FALSE, warning=FALSE}
+g1 <- ggplot(data=train_df,aes(indus))+
+geom_density()
+
+g2 <- ggplot(data=train_df,aes(rad))+
+geom_density()
+
+g3 <- ggplot(data=train_df,aes(tax))+
+geom_density()
+
+grid.arrange(g1,g2,g3, ncol=3,top="Figure 5: Density plots of indus, rad and tax variables")
+```
+
+
+We will create three dummy variables,"indus_dummy", "rad_dummy" and "tax_dummy", to logically divide the values into 2 groups in "indus", "rad" and "tax" variables respectively. This will separate the data in these variables into 2 groups, so that each group will have an approximately normal distribution. This transformation will also need to be applied to the test data as well. The dummy variables will have the following intrepretation:
+
+* If _indus_ variable's value is less than 13, then *indus_dummy* will have a 0, else 1
+* If _rad_ variable's value is less than 15, then *rad_dummy* will have a 0, else 1
+* If _tax_ variable's value is less than 550, then *tax_dummy* will have a 0, else 1
+
+A set of sample rows from the transformed training data set are displayed below:
+
+```{r echo=FALSE, warning=FALSE}
+
+test_df$target <- rep(0,nrow(test_df))
+test_df$target  <- as.factor(test_df$target )
+test_df$indicator <- rep("Test",nrow(test_df))
+
+train_df$indicator <- rep("Train",nrow(train_df))
+
+df <- rbind(train_df,test_df)
+
+df$indus_dummy <- ifelse(df$indus<13,0,1)
+df$rad_dummy <- ifelse(df$rad<15,0,1)
+df$tax_dummy <- ifelse(df$tax<550,0,1)
+train_df <- df[df$indicator == "Train",-15]
+test_df <- df[df$indicator == "Test",-15]
+
+#kable(head(train_df))
+
+pander(head(train_df), split.table = 120,
+style = 'rmarkdown',
+caption="Sample records from training data after adding dummy variables")
+```
+
+We will not be doing any further transformations on the other variables in order to keep the model as simple and interpretable as possible. We can revisit the need of transformations, if we get poor cross validation results. 
+
+\newpage
+
+##Model building
+
+We will build three models with the following criteria, and select the model that has the least 5 fold cross validation error. All the three models are based on the *logistic regression*. 
+
+_Model-1_: Build a model with all the predictor variables (except the 3 new dummy variables), use backward variable selection with the _stepAIC()_ function of MASS package, and finally build the model with just the necessary variables obtained from the variable selection method.
+
+_Model-2_: Build a model with dummy variables created for tax, rad and indus. Again use _stepAIC()_ function to choose the necessary variables, and finally build a model with just the necessary variables. 
+
+_Model-3_: Using the variables identified in _Model-1_, use a quadratic model, and select the required variables using the _stepAIC()_ function. 
+
+All three models will be evaluated using the 5-fold cross validation technique, and the model that gets the least cross validation error will be finally used to predict the crime rate of test observations.
+
+**Building _Model-1_:**
+
+Using the _glm()_ function of MASS library, we obtained the following logistic model for classification:
+
+**Table:2 Coefficients and P-Values of Model-1**
+```{r echo=FALSE, warning=FALSE}
+glm.fit1 <- glm(data=train_df,target~zn+indus+chas+nox+rm+age+dis+
+                  rad+tax+ptratio+black+lstat+medv,family="binomial")
+display_df <- as.data.frame(summary(glm.fit1)$coefficients)
+names(display_df) <- c("Estimate","Std_err", "z-value","p-value")
+
+kable(display_df)
+
+#pander(display_df, split.table = 120,
+#style = 'rmarkdown',
+#caption="Coefficients and P-Values of Model-1")
+#stepAIC(glm.fit1)
+```
+
+We can observe that only the following coefficients have a p-value of less than 1%.
+
+**Table-3: Coefficients of Model-1 which are having a p-value of less than 0.01**
+```{r echo=FALSE, warning=FALSE}
+kable(display_df[display_df[,4] <= 0.01,])
+```
+
+We cannot depend on the p-value of the coefficients and eliminate the variables that have a big p-value, due to the chance of a Type-1 error. For this reason we will use the backward selection method using the _stepAIC()_ function, which produces the following model.
+
+$$Model_1 = \frac{e^{f_1(x)}}{1+e^{f_1(x)}}$$
+
+where,
+$$f_1(x) = -36.364060-0.059091zn-0.067194indus+1.217987chas+ $$
+$$48.468529nox+0.031961age+0.703484dis+0.620491rad-0.006392tax+$$
+$$0.385927ptratio-0.012935black+0.119666medv$$
+
+
+We can observe that _stepAIC()_ function has included some of the high p-valued variables (see Table-2) in the final model. This might be due to the fact that some of the variables in Table-2 have high p-values just by chance. The _stepAIC()_ function has excluded two variables: "rm" and "lstat". These 2 variables have very high p-values, and they are indeed not significant to predict the target value.
+
+From _Model-1_, we can infer that "zn", "indus", "tax" and "black" have negative coefficients. This means a one unit increase in any of these variables (keeping all other variables constant) will result in a decrease in the probability that $target=1$. The "nox" variable's coefficient is so large that a one unit increase in "nox" value (keeping all other variables constant) will result in a significant increase in the probability that $target=1$.
+
+**Building _Model-2_:**
+
+```{r echo=FALSE,warning=FALSE}
+glm.fit2 <- glm(data=train_df,target~zn+indus*indus_dummy+chas+nox+rm+age+dis+
+                  rad*rad_dummy+tax*tax_dummy+ptratio+black+lstat+medv,family="binomial")
+#summary(glm.fit2)
+
+#stepAIC(glm.fit2)
+```
+
+Our second model is produced using the same process as above, but uses the dummy variables created above:
+
+$$\frac{e^{f_2(x)}}{1+e^{f_2(x)}}$$
+where
+$$f_2(x) =  -38.39452-0.06064zn-1.45342 indus \mbox{\_} dummy +1.55134chas+52.01717nox$$
+$$-1.15061rm+0.04066age+0.92588dis+0.54515rad-4.43821tax \mbox{\_} dummy+0.43975ptratio-0.01328black+0.24761medv$$
+
+_Model-2_ does not have the "indus" variable and "tax" variable, but it has the dummy variables related to them("indus_dummy" and "tax_dummy" respectively). Also a new variable "rm" has been included in _Model-2_, while this variable is not included in _Model-1_. The coefficient of "rm" variable is negative, and a one unit increase in "rm" (keeping all other variables constant) will result in decrease of the probability that the target variable assumes 1. The "nox" variable has a higher coefficient, similar to the first model. 
+
+**Building _Model-3_:**
+
+_Model-3_ is a logistic regression using the variables of the first model all raised to the second power. Building a logistic model, and using the same backwards selection method, gives us the following quadratic model:
+
+$$\frac{e^{f_3(x)}}{1+e^{f_3(x)}}$$
+where
+$$f_3(x) =4.927+235.067nox+83.840nox^2+25.218age+14.879age^2+9.926dis-43.337dis^2$$
+$$494.385rad+54.792rad^2-388.883tax-136.723tax^2+38.181ptratio-4.147ptratio^2+9.933black$$
+$$-45.661black^2+34.286medv+16.939medv^2$$
+
+```{r echo=FALSE, warning=FALSE}
+glm.fit3 <- glm(data=train_df,target~
+                  poly(zn,2)+poly(indus,2)+poly(nox,2)+poly(age,2)+poly(dis,2)+
+                  poly(rad,2)+poly(tax,2)+chas+
+                  poly(ptratio,2)+ poly(black,2)+poly(medv,2)
+                ,family="binomial")
+#summary(glm.fit3)
+
+#stepAIC(glm.fit3)
+#cv.glm(train_df,glm.fit3,K=5)$delta[1]
+```
+
+We can see that all the variables in _Model-1_ were also included in _Model-3_ (by the varible selection function _stepAIC()_), except the "chas" variable. All the variables are also raised to the power 2, and the coefficients of the variables are not significantly different. In _Model-1_ and _Model-2_ the coefficients of "nox" are significantly higher than the other variables coefficients. 
+
+
+
+\newpage
+
+##Model selection
+
+In summary we have obtained the following 3 models:
+
+###Model-1
+$$Model_1 = \frac{e^{f_1(x)}}{1+e^{f_1(x)}}$$
+
+where,
+$$f_1(x) = -36.364060-0.059091zn-0.067194indus+1.217987chas+ $$
+$$48.468529nox+0.031961age+0.703484dis+0.620491rad-0.006392tax+$$
+$$0.385927ptratio-0.012935black+0.119666medv$$
+
+
+###Model-2
+$$\frac{e^{f_2(x)}}{1+e^{f_2(x)}}$$
+where
+$$f_2(x) =  -38.39452-0.06064zn-1.45342 indus \mbox{\_} dummy +1.55134chas+52.01717nox$$
+$$-1.15061rm+0.04066age+0.92588dis+0.54515rad-4.43821tax \mbox{\_} dummy+0.43975ptratio-0.01328black+0.24761medv$$
+
+
+###Model-3
+$$\frac{e^{f_3(x)}}{1+e^{f_3(x)}}$$
+where
+$$f_3(x) =4.927+235.067nox+83.840nox^2+25.218age+14.879age^2+9.926dis-43.337dis^2$$
+$$494.385rad+54.792rad^2-388.883tax-136.723tax^2+38.181ptratio-4.147ptratio^2+9.933black$$
+$$-45.661black^2+34.286medv+16.939medv^2$$
+
+We will evaluate the performance of these 3 models first using the 5 fold cross validation technique on the training data using the _cv.glm()_ function of "boot" library. The model with the lowest CV error will then be further analyzed using _confusionMatrix()_ and _plot.roc()_ to make sure the model's accuracy metrics and the ROC curve are within acceptable thresholds. Specifically if the selected model's accuracy is below 0.85, only then will we consider models that had inferior CV error rates.   
+
+Using the _cv.glm()_ function, we obtained the following cross validation errors given below in Figure-6.
+
+**Table-4 Cross validation errors**
+```{r echo=FALSE, warning=FALSE}
+set.seed(100)
+cv_1 <- cv.glm(train_df,glm.fit1,K=5)$delta[1]
+cv_2 <- cv.glm(train_df,glm.fit2,K=5)$delta[1]
+cv_3 <- cv.glm(train_df,glm.fit3,K=5)$delta[1]
+
+#ggplot(train_df, aes(x = factor(cyl), y = mmpg))+ 
+#  geom_bar(stat = "identity")
+display_df <- data.frame(Model=c("Model-1","Model-2","Model-3"),CV_Error=c(cv_1,cv_2,cv_3))
+kable(display_df)
+
+ggplot(data=display_df,aes(x=Model,y=CV_Error,fill=Model))+
+  geom_bar(stat="identity",width=0.4)+
+  labs(title="Figure-6: Models cross validation error")
+```
+
+The above plot shows that _Model-3_ has the lowest cross validation error and we will therefore select this model to be checked for accuracy metrics. Specifically if this model's accuracy metric had been below 0.85, we would have considered building more models by transforming independent variables and/or trying other methods such as LASSO and Ridge regression.
+
+The performance of _Model-3_ is now further evaluated using the following metrics:
+
+* Confusion matrix
+* Accuracy
+* Classification error rate
+* Precision
+* Sensitivity
+* Specificity
+* F1 score
+* AUC 
+
+The confusion matrix and resulting metrics for the predictions obtained using _Model-3_ are displayed below:
+
+###Figure-7: Confusion matrix and other performance metrics of _Model-3_
+
+```{r echo=FALSE}
+actual <- train_df$target
+prob <- predict(glm.fit3,type="response")
+predicted <- ifelse(prob>=0.5,1,0)
+
+conf_matrix <- table(predicted,actual)
+#print(conf_matrix)
+confusionMatrix(conf_matrix,positive = "1")
+```
+The accuracy of _Model-3_ is 0.9485, which is well above our threshold at 0.85. The F1 Score is `r 2*0.930131*0.9638009/(0.9638009+0.930131)` meaning that the balance between precision and sensitivity is excellent.
+
+Model-3 has obtained an AUC of 98.93, and the curve is displayed in Figure-8.
+
+```{r echo=FALSE, warning=FALSE}
+roc_obj = roc(response=train_df$target,predictor=prob,
+              levels=rev(levels(as.factor(train_df$target))))
+
+plot.roc(roc_obj,main="Figure 8: AUC for Model-3")
+
+```
+
+_Model-3_ is finally used to estimate the probability of $target$ variable being 1 on the test data, and the predicted output, along with the estimated probabilities are written to a file named "test_result.csv", which has been submitted along with this write-up.
+
+##Future work
+We obtained an accuracy of 94.85%, which suggests that the logistic regression with quadratic variables is a good model to perform predictions. However we would like to test the following in future:
+
+1. Implement and test non-parametric methods like KNN, random forests and SVM to perform classification.
+2. Implement and test Linear Discriminant Analysis. 
+3. Implement and test Quadratic Discriminant Analysis. 
+4. The coefficient of "nox" variable in _Model-1_ and _Model-2_ is pretty high when compared to other variables coefficient. We would like to try using LASSO and Ridge regression to diminish the variable coefficients and test the performance of the resulting models.
+
+
+
+\newpage
+
+#Appendix-A
+
+The density plots of all the independent variables are displayed below. We did not transform any of these variables:
+
+###Figure A-1: Density plots of all the independent variables
+```{r echo=FALSE,warning=FALSE}
+
+g1 <- ggplot(data=train_df,aes(zn))+
+geom_density()
+
+g2 <- ggplot(data=train_df,aes(indus))+
+geom_density()
+
+g3 <- ggplot(data=train_df,aes(as.factor(chas)))+
+geom_bar()
+
+g4 <- ggplot(data=train_df,aes(nox))+
+geom_density()
+
+g5 <- ggplot(data=train_df,aes(rm))+
+geom_density()
+
+g6 <- ggplot(data=train_df,aes(age))+
+geom_density()
+
+g7 <- ggplot(data=train_df,aes(dis))+
+geom_density()
+
+g8 <- ggplot(data=train_df,aes(rad))+
+geom_density()
+
+g9 <- ggplot(data=train_df,aes(tax))+
+geom_density()
+
+g10 <- ggplot(data=train_df,aes(ptratio))+
+geom_density()
+
+g11 <- ggplot(data=train_df,aes(black))+
+geom_density()
+
+g12 <- ggplot(data=train_df,aes(lstat))+
+geom_density()
+
+g13 <- ggplot(data=train_df,aes(medv))+
+geom_density()
+
+grid.arrange(g1,g2,g3,g4,g5,g6,g7, g8,g9,g10,g11,g12,g13, ncol=3)
+
+```
+
+
+\newpage
+
+#Appendix-B
+
+We used the following R code to implement and test the models:
+
+```{r eval=FALSE}
+library(knitr)
+library(ggplot2)
+library(reshape2)
+library(gridExtra)
+library(boot)
+library(pander)
+library(gridExtra)
+library(MASS)
+library(caret)
+library(pROC)
+```
+### Data Prep
+```{r eval=FALSE}
+setwd("C:/Users/Sekhar/Documents/R Programs/Business Analytics/HW3")
+
+train_df <- read.csv("crime-training-data.csv") 
+test_df <- read.csv("crime-evaluation-data.csv") 
+#head(train_df)
+#head(test_df)
+```
+```{r eval=FALSE}
+summary(train_df)
+#summary(test_df)
+```
+```{r eval=FALSE}
+train_df$target <- as.factor(train_df$target)
+
+ggplot(data=train_df,aes(target,fill=target))+
+  geom_bar(width=0.5)+
+  labs(title="Figure 3: Bar chart of the target variable")
+```
+### Data Exploration
+```{r eval=FALSE, echo=FALSE,ffig.width = 8, fig.height = 6,warning=FALSE}
+
+#Code taken from 
+#http://www.sthda.com/english/wiki/ggplot2-quick-correlation-matrix-heatmap-r-software-and-data-visualization
+
+library(reshape2)
+train_df <- read.csv("crime-training-data.csv") 
+cormat <- round(cor(train_df),2)
+
+##
+# Get lower triangle of the correlation matrix
+
+get_lower_tri<-function(cormat){
+  cormat[upper.tri(cormat)] <- NA
+  return(cormat)
+}
+# Get upper triangle of the correlation matrix
+get_upper_tri <- function(cormat){
+  cormat[lower.tri(cormat)]<- NA
+  return(cormat)
+}
+
+upper_tri <- get_upper_tri(cormat)
+#upper_tri
+
+
+reorder_cormat <- function(cormat){
+  # Use correlation between variables as distance
+  dd <- as.dist((1-cormat)/2)
+  hc <- hclust(dd)
+  cormat <-cormat[hc$order, hc$order]
+}
+
+# Reorder the correlation matrix
+cormat <- reorder_cormat(cormat)
+upper_tri <- get_upper_tri(cormat)
+# Melt the correlation matrix
+melted_cormat <- melt(upper_tri, na.rm = TRUE)
+
+# Create a ggheatmap
+ggheatmap <- ggplot(melted_cormat, aes(Var2, Var1, fill = value))+
+  geom_tile(color = "white")+
+  scale_fill_gradient2(low = "blue", high = "red", mid = "white", 
+                       midpoint = 0, limit = c(-1,1), space = "Lab", 
+                       name="Pearson\nCorrelation") +
+  theme_minimal()+ # minimal theme
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, 
+                                   size = 12, hjust = 1))+
+  coord_fixed()
+ggheatmap + 
+  geom_text(aes(Var2, Var1, label = value), color = "black", size = 2) +
+  theme(
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.border = element_blank(),
+    panel.background = element_blank(),
+    axis.ticks = element_blank(),
+    legend.justification = c(1, 0),
+    legend.position = c(0.6, 0.7),
+    legend.direction = "horizontal")+
+  guides(fill = guide_colorbar(barwidth = 7, barheight = 1,
+                               title.position = "top", title.hjust = 0.5))+
+  labs(title="Figure 4: Heat map showing correlations")
+
+train_df$target <- as.factor(train_df$target)
+
+```
+```{r eval=FALSE}
+g1 <- ggplot(data=train_df,aes(indus))+
+geom_density()
+
+g2 <- ggplot(data=train_df,aes(rad))+
+geom_density()
+
+g3 <- ggplot(data=train_df,aes(tax))+
+geom_density()
+
+grid.arrange(g1,g2,g3, ncol=3,
+             top="Figure 5: Density plots of indus, rad and tax variables")
+```
+### Dummy Variable Creation
+```{r eval=FALSE}
+
+test_df$target <- rep(0,nrow(test_df))
+test_df$target  <- as.factor(test_df$target )
+test_df$indicator <- rep("Test",nrow(test_df))
+
+train_df$indicator <- rep("Train",nrow(train_df))
+
+df <- rbind(train_df,test_df)
+
+df$indus_dummy <- ifelse(df$indus<13,0,1)
+df$rad_dummy <- ifelse(df$rad<15,0,1)
+df$tax_dummy <- ifelse(df$tax<550,0,1)
+train_df <- df[df$indicator == "Train",-15]
+test_df <- df[df$indicator == "Test",-15]
+
+#kable(head(train_df))
+
+pander(head(train_df), split.table = 120,
+style = 'rmarkdown',
+caption="Sample records from training data after adding dummy variables")
+```
+### Model Building
+```{r eval=FALSE}
+glm.fit1 <- glm(data=train_df,target~zn+indus+chas+nox+rm+age+dis+
+                  rad+tax+ptratio+black+lstat+medv,family="binomial")
+display_df <- as.data.frame(summary(glm.fit1)$coefficients)
+names(display_df) <- c("Estimate","Std_err", "z-value","p-value")
+
+kable(display_df)
+
+#pander(display_df, split.table = 120,
+#style = 'rmarkdown',
+#caption="Coefficients and P-Values of Model-1")
+#stepAIC(glm.fit1)
+```
+```{r eval=FALSE}
+display_df[display_df[,4] <= 0.01,]
+```
+
+```{r eval=FALSE, echo=FALSE,warning=FALSE}
+glm.fit2 <- glm(data=train_df,target~zn+indus*indus_dummy+
+                  chas+nox+rm+age+dis+
+                  rad*rad_dummy+tax*tax_dummy+
+                  ptratio+black+lstat+medv,family="binomial")
+#summary(glm.fit2)
+
+#stepAIC(glm.fit2)
+```
+```{r eval=FALSE}
+glm.fit3 <- glm(data=train_df,target~
+                  poly(zn,2)+poly(indus,2)+poly(nox,2)+poly(age,2)+poly(dis,2)+
+                  poly(rad,2)+poly(tax,2)+chas+
+                  poly(ptratio,2)+ poly(black,2)+poly(medv,2)
+                ,family="binomial")
+#summary(glm.fit3)
+
+#stepAIC(glm.fit3)
+#cv.glm(train_df,glm.fit3,K=5)$delta[1]
+```
+### Evaluation
+```{r eval=FALSE}
+set.seed(100)
+cv_1 <- cv.glm(train_df,glm.fit1,K=5)$delta[1]
+cv_2 <- cv.glm(train_df,glm.fit2,K=5)$delta[1]
+cv_3 <- cv.glm(train_df,glm.fit3,K=5)$delta[1]
+
+#ggplot(train_df, aes(x = factor(cyl), y = mmpg))+ 
+#  geom_bar(stat = "identity")
+display_df <- data.frame(Model=c("Model-1","Model-2","Model-3"),
+                         CV_Error=c(cv_1,cv_2,cv_3))
+kable(display_df)
+
+ggplot(data=display_df,aes(x=Model,y=CV_Error,fill=Model))+
+  geom_bar(stat="identity",width=0.4)+
+  labs(title="Figure-6: Models cross validation error")
+```
+
+```{r eval=FALSE}
+actual <- train_df$target
+prob <- predict(glm.fit3,type="response")
+predicted <- ifelse(prob>=0.5,1,0)
+
+conf_matrix <- table(predicted,actual)
+#print(conf_matrix)
+confusionMatrix(conf_matrix,positive = "1")
+```
+
+```{r eval=FALSE}
+roc_obj = roc(response=train_df$target,predictor=prob,
+              levels=rev(levels(as.factor(train_df$target))))
+
+plot.roc(roc_obj,main="Figure 8: AUC for Model-3")
+
+```
+### Test Data Evaluation
+```{r eval=FALSE}
+test_df <- read.csv("crime-evaluation-data.csv") 
+prob <- predict(glm.fit3,test_df,type="response")
+target <- ifelse(prob>=0.5,1,0)
+
+test_df$probability <- prob
+test_df$target <- target
+
+write.csv(test_df,file="test_result.csv")
+```
