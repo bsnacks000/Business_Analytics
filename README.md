@@ -1,1 +1,1 @@
-# Business_Analytics (MS in Data Analytics - DATA 621 course)
+# Business_Analytics (MS in Data Analytics - DATA 621 course at CUNY)
